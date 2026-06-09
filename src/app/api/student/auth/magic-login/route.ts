@@ -22,8 +22,8 @@ export async function GET(req: Request) {
       return NextResponse.redirect(new URL('/?error=Token%20email%20mismatch', req.url));
     }
 
-    // 3. Redirect to the login screen with email prefilled, requiring NIC and Index verification
-    return NextResponse.redirect(new URL(`/?email=${encodeURIComponent(emailParam.toLowerCase().trim())}`, req.url));
+    // 3. Redirect to the login screen with email and token prefilled, requiring NIC and Index verification
+    return NextResponse.redirect(new URL(`/?email=${encodeURIComponent(emailParam.toLowerCase().trim())}&token=${encodeURIComponent(token)}`, req.url));
   } catch (err: any) {
     console.error('Magic login redirect error:', err.message);
     return NextResponse.redirect(new URL(`/?error=${encodeURIComponent(err.message)}`, req.url));

@@ -32,6 +32,15 @@ export const pool = new Pool({
   connectionTimeoutMillis: 5000,
 });
 
+// Auto-run migrations on startup to apply schema patches/migrations dynamically
+runMigrations()
+  .then(() => {
+    console.log('Database migrations and patches verified successfully on startup.');
+  })
+  .catch((err) => {
+    console.error('Failed to run database migrations/patches on startup:', err);
+  });
+
 /**
  * Self-healing migrations runner. Runs schema generation if 'students' table is missing.
  */
@@ -65,6 +74,11 @@ export async function runMigrations() {
       await client.query(`
         ALTER TABLE students 
         ADD COLUMN IF NOT EXISTS nic_no VARCHAR(50) UNIQUE;
+      `);
+
+      await client.query(`
+        ALTER TABLE students 
+        ADD COLUMN IF NOT EXISTS attending_convocation BOOLEAN DEFAULT NULL;
       `);
 
       await client.query(`

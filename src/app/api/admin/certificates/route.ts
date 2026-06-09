@@ -25,7 +25,183 @@ if (!global.certTaskStatus) {
  * Automatically creates mock templates for Internal Front/Back and External Front/Back
  * to act as cached high-resolution layouts for coordinate text injection.
  */
+function drawCenteredParagraph(page: any, text: string, font: any, size: number, yStart: number, maxW: number, lineGap: number = 4) {
+  const words = text.split(' ');
+  let lines: string[] = [];
+  let currentLine = '';
+  for (const word of words) {
+    const testLine = currentLine ? `${currentLine} ${word}` : word;
+    const width = font.widthOfTextAtSize(testLine, size);
+    if (width > maxW) {
+      lines.push(currentLine);
+      currentLine = word;
+    } else {
+      currentLine = testLine;
+    }
+  }
+  if (currentLine) {
+    lines.push(currentLine);
+  }
+  
+  let currentY = yStart;
+  for (const line of lines) {
+    const w = font.widthOfTextAtSize(line, size);
+    page.drawText(line, {
+      x: (page.getWidth() - w) / 2,
+      y: currentY,
+      font,
+      size,
+      color: rgb(0.1, 0.1, 0.1),
+    });
+    currentY -= (size + lineGap);
+  }
+}
+
+function drawGradingTable(page: any, font: any, fontBold: any, yTop: number) {
+  const tableX = 77.6375; // Centered
+  const colWidth = 110;
+  const tableWidth = 440;
+  const rowHeight = 16;
+  const headerHeight = 20;
+
+  const headers = ["Grading", "Regulation", "Relevance", "Status"];
+  const rows = [
+    ["First Class", "GPA >= 3.70", "Excellent", "Awarded"],
+    ["Second Upper", "3.30 - 3.69", "Very Good", "Awarded"],
+    ["Second Lower", "3.00 - 3.29", "Good", "Awarded"],
+    ["Pass", "2.00 - 2.99", "Satisfactory", "Awarded"]
+  ];
+
+  // Draw Header Row background
+  page.drawRectangle({
+    x: tableX,
+    y: yTop - headerHeight,
+    width: tableWidth,
+    height: headerHeight,
+    color: rgb(0.95, 0.95, 0.95),
+  });
+
+  // Draw Header text
+  for (let i = 0; i < headers.length; i++) {
+    const text = headers[i];
+    const textW = fontBold.widthOfTextAtSize(text, 10);
+    page.drawText(text, {
+      x: tableX + i * colWidth + (colWidth - textW) / 2,
+      y: yTop - headerHeight + 5,
+      font: fontBold,
+      size: 10,
+      color: rgb(0.1, 0.1, 0.1),
+    });
+  }
+
+  // Draw Rows
+  let currentY = yTop - headerHeight;
+  for (let r = 0; r < rows.length; r++) {
+    currentY -= rowHeight;
+    const row = rows[r];
+    // Alternate row background colors
+    if (r % 2 === 1) {
+      page.drawRectangle({
+        x: tableX,
+        y: currentY,
+        width: tableWidth,
+        height: rowHeight,
+        color: rgb(0.98, 0.98, 0.98),
+      });
+    }
+
+    for (let i = 0; i < row.length; i++) {
+      const text = row[i];
+      const textW = font.widthOfTextAtSize(text, 9);
+      page.drawText(text, {
+        x: tableX + i * colWidth + (colWidth - textW) / 2,
+        y: currentY + 4,
+        font,
+        size: 9,
+        color: rgb(0.2, 0.2, 0.2),
+      });
+    }
+  }
+
+  // Draw Borders (Horizontal grid lines)
+  let lineY = yTop;
+  page.drawLine({ start: { x: tableX, y: lineY }, end: { x: tableX + tableWidth, y: lineY }, thickness: 0.5, color: rgb(0.5, 0.5, 0.5) });
+  lineY -= headerHeight;
+  page.drawLine({ start: { x: tableX, y: lineY }, end: { x: tableX + tableWidth, y: lineY }, thickness: 0.5, color: rgb(0.5, 0.5, 0.5) });
+  for (let r = 0; r < rows.length; r++) {
+    lineY -= rowHeight;
+    page.drawLine({ start: { x: tableX, y: lineY }, end: { x: tableX + tableWidth, y: lineY }, thickness: 0.5, color: rgb(0.7, 0.7, 0.7) });
+  }
+
+  // Draw Vertical grid lines
+  for (let i = 0; i <= headers.length; i++) {
+    page.drawLine({
+      start: { x: tableX + i * colWidth, y: yTop },
+      end: { x: tableX + i * colWidth, y: yTop - headerHeight - rows.length * rowHeight },
+      thickness: 0.5,
+      color: rgb(0.5, 0.5, 0.5),
+    });
+  }
+}
+
+function patchFontkit() {
+  try {
+    const fontkitDir = path.join(process.cwd(), 'node_modules', '@pdf-lib', 'fontkit');
+    if (!fs.existsSync(fontkitDir)) return;
+
+    const replaceInFile = (filePath: string) => {
+      let content = fs.readFileSync(filePath, 'utf8');
+      let changed = false;
+
+      const regex1 = /var\s+syllable\s*=\s*glyphs\s*\[\s*start\s*\]\s*\.\s*shaperInfo\s*\.\s*syllable\s*;([\s\S]*?)while\s*\(\s*\+\+\s*start\s*<\s*glyphs\.length\s*&&\s*glyphs\s*\[\s*start\s*\]\s*\.\s*shaperInfo\s*\.\s*syllable\s*===\s*syllable\s*\)/g;
+      const replacementStr1 = `var syllable = glyphs[start].shaperInfo ? glyphs[start].shaperInfo.syllable : null;$1while (++start < glyphs.length && (glyphs[start].shaperInfo ? glyphs[start].shaperInfo.syllable : null) === syllable)`;
+
+      if (regex1.test(content)) {
+        content = content.replace(regex1, replacementStr1);
+        changed = true;
+      }
+
+      const regex2 = /var\s+info\s*=\s*glyphs\s*\[\s*start\s*\]\s*\.\s*shaperInfo\s*;\s*var\s+type\s*=\s*info\s*\.\s*syllableType\s*;/g;
+      const replacementStr2 = `var info = glyphs[start].shaperInfo;\n    if (!info) continue;\n    var type = info.syllableType;`;
+
+      if (regex2.test(content)) {
+        content = content.replace(regex2, replacementStr2);
+        changed = true;
+      }
+
+      if (changed) {
+        fs.writeFileSync(filePath, content, 'utf8');
+        console.log(`[Fontkit Patch] Successfully patched fontkit at: ${filePath}`);
+      }
+    };
+
+    const walk = (dir: string) => {
+      const files = fs.readdirSync(dir);
+      for (const file of files) {
+        const fullPath = path.join(dir, file);
+        const stat = fs.statSync(fullPath);
+        if (stat.isDirectory()) {
+          walk(fullPath);
+        } else if (file.endsWith('.js')) {
+          replaceInFile(fullPath);
+        }
+      }
+    };
+
+    walk(fontkitDir);
+  } catch (err: any) {
+    console.error('Failed to patch fontkit dynamically:', err.message);
+  }
+}
+
+/**
+ * Automatically creates mock templates for Internal Front/Back and External Front/Back
+ * to act as cached high-resolution layouts for coordinate text injection.
+ */
 async function ensureTemplates() {
+  // Apply the dynamic fontkit patch to prevent complex Sinhala/Tamil character crashes
+  patchFontkit();
+
   const dir = path.join(process.cwd(), 'public', 'templates');
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
@@ -53,59 +229,253 @@ async function ensureTemplates() {
     }
   }
 
-  const templates = [
-    { pdfName: 'internal_front.pdf', jpgName: 'internal_front.jpg', fallbackText: 'UNIVERSITY OF GRADUATION - INTERNAL DEGREE (FRONT)' },
-    { pdfName: 'internal_back.pdf', jpgName: 'internal_back.jpg', fallbackText: 'OFFICIAL UNIVERSITY SEAL & REGISTRAR SIGNATURE (BACK)' },
-    { pdfName: 'external_front.pdf', jpgName: 'external_front.jpg', fallbackText: 'UNIVERSITY OF GRADUATION - EXTERNAL DEGREE (FRONT)' },
-    { pdfName: 'external_back.pdf', jpgName: 'external_back.jpg', fallbackText: 'OFFICIAL UNIVERSITY SEAL & REGISTRAR SIGNATURE (BACK)' }
-  ];
+  const logoPath = path.join(dir, 'RUSL.png');
+  let logoBytes: Buffer | null = null;
+  if (fs.existsSync(logoPath)) {
+    logoBytes = fs.readFileSync(logoPath);
+  }
 
-  for (const t of templates) {
-    const pdfPath = path.join(dir, t.pdfName);
-    const jpgPath = path.join(dir, t.jpgName);
-    
-    if (!fs.existsSync(pdfPath)) {
-      const doc = await PDFDocument.create();
-      const page = doc.addPage([595.275, 841.89]); // A4 Size in points
-      
-      if (fs.existsSync(jpgPath)) {
-        try {
-          const jpgBytes = fs.readFileSync(jpgPath);
-          const embeddedJpg = await doc.embedJpg(jpgBytes);
-          page.drawImage(embeddedJpg, {
-            x: 0,
-            y: 0,
-            width: page.getWidth(),
-            height: page.getHeight(),
-          });
-        } catch (err: any) {
-          console.error(`Failed to embed JPG template for ${t.pdfName}:`, err.message);
-        }
-      } else {
-        const font = await doc.embedFont(StandardFonts.HelveticaBold);
-        // Draw template decoration border
-        page.drawRectangle({
-          x: 15,
-          y: 15,
-          width: 565.275,
-          height: 811.89,
-          borderColor: rgb(0.09, 0.29, 0.65),
-          borderWidth: 3,
-        });
+  const frontTypes: ('Internal' | 'External')[] = ['Internal', 'External'];
 
-        // Label background for debugging verification
-        page.drawText(t.fallbackText, {
-          x: 60,
-          y: 750,
-          size: 16,
-          font,
-          color: rgb(0.1, 0.1, 0.1),
-        });
-      }
+  for (const type of frontTypes) {
+    const pdfName = `${type.toLowerCase()}_front.pdf`;
+    const pdfPath = path.join(dir, pdfName);
 
-      const bytes = await doc.save();
-      fs.writeFileSync(pdfPath, bytes);
+    // Generate Front PDF Template
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([595.275, 841.89]); // A4 Size
+
+    // Elegant borders
+    page.drawRectangle({
+      x: 20,
+      y: 20,
+      width: 555.275,
+      height: 801.89,
+      borderColor: rgb(0.15, 0.15, 0.15),
+      borderWidth: 1.5,
+    });
+    page.drawRectangle({
+      x: 23,
+      y: 23,
+      width: 549.275,
+      height: 795.89,
+      borderColor: rgb(0.15, 0.15, 0.15),
+      borderWidth: 0.5,
+    });
+
+    // Logo
+    if (logoBytes) {
+      const logoImage = await doc.embedPng(logoBytes);
+      const logoSize = 113.386; // 40mm x 40mm
+      page.drawImage(logoImage, {
+        x: (595.275 - logoSize) / 2,
+        y: 841.89 - 70.866 - logoSize, // 25mm margin from top
+        width: logoSize,
+        height: logoSize,
+      });
     }
+
+    // University Name
+    const timesBold = await doc.embedFont(StandardFonts.TimesRomanBold);
+    const timesRoman = await doc.embedFont(StandardFonts.TimesRoman);
+    const timesItalic = await doc.embedFont(StandardFonts.TimesRomanItalic);
+
+    const uniText = "RAJARAJA UNIVERSITY OF SRI LANKA";
+    const uniWidth = timesBold.widthOfTextAtSize(uniText, 24);
+    page.drawText(uniText, {
+      x: (595.275 - uniWidth) / 2,
+      y: 620,
+      font: timesBold,
+      size: 24,
+      color: rgb(0.1, 0.1, 0.1),
+    });
+
+    // Preamble
+    const preambleText = type === 'Internal'
+      ? "Having successfully completed the prescribed courses of study and the examinations of this university as an internal candidate"
+      : "Having successfully completed the prescribed courses of study and the examinations of this university as an external candidate";
+    drawCenteredParagraph(page, preambleText, timesItalic, 12, 560, 453.543, 6);
+
+    // Admission Bridge
+    const bridgeText = "was admitted to the degree of";
+    const bridgeWidth = timesRoman.widthOfTextAtSize(bridgeText, 12);
+    page.drawText(bridgeText, {
+      x: (595.275 - bridgeWidth) / 2,
+      y: 460,
+      font: timesRoman,
+      size: 12,
+      color: rgb(0.2, 0.2, 0.2),
+    });
+
+    // Conferment static bridge texts
+    const andWidth = timesRoman.widthOfTextAtSize("and", 12);
+    page.drawText("and", {
+      x: (595.275 - andWidth) / 2,
+      y: 325,
+      font: timesRoman,
+      size: 12,
+      color: rgb(0.2, 0.2, 0.2),
+    });
+
+    const confWidth = timesRoman.widthOfTextAtSize("was conferred this degree at the", 12);
+    page.drawText("was conferred this degree at the", {
+      x: (595.275 - confWidth) / 2,
+      y: 300,
+      font: timesRoman,
+      size: 12,
+      color: rgb(0.2, 0.2, 0.2),
+    });
+
+    const convWidth = timesBold.widthOfTextAtSize("convocation", 14);
+    page.drawText("convocation", {
+      x: (595.275 - convWidth) / 2,
+      y: 270,
+      font: timesBold,
+      size: 14,
+      color: rgb(0.1, 0.1, 0.1),
+    });
+
+    // Signature blocks
+    const labelY = 120;
+    const lineY = 140;
+
+    // Registrar Line & Label
+    page.drawLine({
+      start: { x: 39.213, y: lineY },
+      end: { x: 159.213, y: lineY },
+      thickness: 0.75,
+      color: rgb(0.2, 0.2, 0.2),
+    });
+    const regLabel = "Registrar";
+    const regLabelWidth = timesRoman.widthOfTextAtSize(regLabel, 10);
+    page.drawText(regLabel, {
+      x: 99.213 - (regLabelWidth / 2),
+      y: labelY,
+      font: timesRoman,
+      size: 10,
+      color: rgb(0.2, 0.2, 0.2),
+    });
+
+    // Vice Chancellor Line & Label
+    page.drawLine({
+      start: { x: 436.063, y: lineY },
+      end: { x: 556.063, y: lineY },
+      thickness: 0.75,
+      color: rgb(0.2, 0.2, 0.2),
+    });
+    const vcLabel = "Vice Chancellor";
+    const vcLabelWidth = timesRoman.widthOfTextAtSize(vcLabel, 10);
+    page.drawText(vcLabel, {
+      x: 496.063 - (vcLabelWidth / 2),
+      y: labelY,
+      font: timesRoman,
+      size: 10,
+      color: rgb(0.2, 0.2, 0.2),
+    });
+
+    // Red Seal circle
+    const sealRadius = 42.52; // 30mm diameter -> 15mm radius
+    page.drawCircle({
+      x: 297.638,
+      y: lineY,
+      radius: sealRadius,
+      borderColor: rgb(0.8, 0.1, 0.1),
+      borderWidth: 1.5,
+    });
+    page.drawCircle({
+      x: 297.638,
+      y: lineY,
+      radius: sealRadius - 3,
+      borderColor: rgb(0.8, 0.1, 0.1),
+      borderWidth: 0.5,
+    });
+    const sealText = "SEAL";
+    const sealTextWidth = timesBold.widthOfTextAtSize(sealText, 8);
+    page.drawText(sealText, {
+      x: 297.638 - (sealTextWidth / 2),
+      y: lineY - 3,
+      font: timesBold,
+      size: 8,
+      color: rgb(0.8, 0.1, 0.1),
+    });
+
+    const bytes = await doc.save();
+    fs.writeFileSync(pdfPath, bytes);
+  }
+
+  // Generate Back PDF Templates
+  const backNames = ['internal_back.pdf', 'external_back.pdf'];
+  for (const backName of backNames) {
+    const pdfPath = path.join(dir, backName);
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([595.275, 841.89]); // A4 Size
+
+    // Borders (replicate Front borders)
+    page.drawRectangle({
+      x: 20,
+      y: 20,
+      width: 555.275,
+      height: 801.89,
+      borderColor: rgb(0.15, 0.15, 0.15),
+      borderWidth: 1.5,
+    });
+    page.drawRectangle({
+      x: 23,
+      y: 23,
+      width: 549.275,
+      height: 795.89,
+      borderColor: rgb(0.15, 0.15, 0.15),
+      borderWidth: 0.5,
+    });
+
+    // 1. Logo scaled down (25mm x 25mm = 70.866 points)
+    if (logoBytes) {
+      const logoImage = await doc.embedPng(logoBytes);
+      const logoSize = 70.866;
+      page.drawImage(logoImage, {
+        x: (595.275 - logoSize) / 2,
+        y: 841.89 - 40 - logoSize, // 40pt margin from top
+        width: logoSize,
+        height: logoSize,
+      });
+    }
+
+    // 2. Reverse branding text
+    const timesBold = await doc.embedFont(StandardFonts.TimesRomanBold);
+    const timesRoman = await doc.embedFont(StandardFonts.TimesRoman);
+    const uniText = "RAJARAJA UNIVERSITY OF SRI LANKA";
+    const uniWidth = timesBold.widthOfTextAtSize(uniText, 16);
+    page.drawText(uniText, {
+      x: (595.275 - uniWidth) / 2,
+      y: 710,
+      font: timesBold,
+      size: 16,
+      color: rgb(0.1, 0.1, 0.1),
+    });
+
+    // 3. Section A: Grading Scheme Table
+    drawGradingTable(page, timesRoman, timesBold, 680);
+
+    // 4. Reverse footer (replicate lines matching Side 1 grid heights)
+    const lineY = 140;
+
+    // Registrar line
+    page.drawLine({
+      start: { x: 39.213, y: lineY },
+      end: { x: 159.213, y: lineY },
+      thickness: 0.75,
+      color: rgb(0.2, 0.2, 0.2),
+    });
+    // Vice Chancellor line
+    page.drawLine({
+      start: { x: 436.063, y: lineY },
+      end: { x: 556.063, y: lineY },
+      thickness: 0.75,
+      color: rgb(0.2, 0.2, 0.2),
+    });
+
+    const bytes = await doc.save();
+    fs.writeFileSync(pdfPath, bytes);
   }
 }
 

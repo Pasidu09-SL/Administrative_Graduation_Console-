@@ -61,6 +61,7 @@ CREATE TABLE students (
   class VARCHAR(100) NOT NULL,
   
   -- Student Actions
+  attending_convocation BOOLEAN DEFAULT NULL,
   attendance_confirmed BOOLEAN DEFAULT FALSE,
   profile_photo_path TEXT,
   payment_slip_path TEXT,

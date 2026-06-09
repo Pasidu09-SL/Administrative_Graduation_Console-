@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { runAsAdmin } from '@/lib/db';
-import { getAdminSession } from '@/lib/auth';
+import { getAdminSession, signMagicToken } from '@/lib/auth';
 import { sendEmail, getRejectionTemplate } from '@/lib/email';
 
 export async function GET(req: Request) {
@@ -14,6 +14,8 @@ export async function GET(req: Request) {
     const faculty = searchParams.get('faculty');
     const degreeId = searchParams.get('degreeId');
     const status = searchParams.get('status');
+    const attending = searchParams.get('attending');
+    const responseStatus = searchParams.get('responseStatus');
 
     const data = await runAsAdmin(async (client) => {
       const conditions: string[] = [];
@@ -34,6 +36,16 @@ export async function GET(req: Request) {
         conditions.push(`s.verification_status = $${index}`);
         values.push(status);
         index++;
+      }
+      if (attending !== null && attending !== undefined && attending !== '') {
+        conditions.push(`s.attending_convocation = $${index}`);
+        values.push(attending === 'true');
+        index++;
+      }
+      if (responseStatus === 'pending') {
+        conditions.push(`s.attendance_confirmed = false`);
+      } else if (responseStatus === 'submitted') {
+        conditions.push(`s.attendance_confirmed = true`);
       }
 
       const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -115,7 +127,8 @@ export async function POST(req: Request) {
 
         // Dispatch correction alert email via Brevo
         const { origin } = new URL(req.url);
-        const correctionUrl = `${origin}/?email=${encodeURIComponent(student.email)}`;
+        const token = signMagicToken(student.email, student.index_no);
+        const correctionUrl = `${origin}/?email=${encodeURIComponent(student.email)}&token=${token}`;
         try {
           await sendEmail({
             to: [{ email: student.email, name: student.name_with_initials }],

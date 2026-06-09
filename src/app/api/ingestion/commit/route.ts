@@ -81,10 +81,10 @@ export async function POST(req: Request) {
 
     const durationMs = Date.now() - startTime;
     const { origin } = new URL(req.url);
-
     const notifications = [];
     for (const row of rows) {
-      const magicLink = `${origin}/?email=${encodeURIComponent(row.email.toLowerCase().trim())}`;
+      const magicToken = signMagicToken(row.email, row.index_no);
+      const magicLink = `${origin}/api/student/auth/magic-login?email=${encodeURIComponent(row.email.toLowerCase().trim())}&token=${encodeURIComponent(magicToken)}`;
 
       try {
         // Dispatch magic link email via Brevo

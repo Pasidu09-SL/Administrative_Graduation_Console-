@@ -14,19 +14,29 @@ export default function EntryPage() {
   const [email, setEmail] = useState('');
   const [indexNo, setIndexNo] = useState('');
   const [nicNo, setNicNo] = useState('');
+  const [token, setToken] = useState('');
   
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [isEmailLocked, setIsEmailLocked] = useState(false);
+  const [isTokenMissing, setIsTokenMissing] = useState(false);
 
   React.useEffect(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const emailParam = params.get('email');
+      const tokenParam = params.get('token');
       if (emailParam) {
         setEmail(emailParam);
         setIsEmailLocked(true);
+      }
+      if (tokenParam) {
+        setToken(tokenParam);
+        setIsTokenMissing(false);
+      } else {
+        setIsTokenMissing(true);
+        setError('Access Denied: Please use the unique registration link sent to your email to access this portal.');
       }
       const errorParam = params.get('error');
       if (errorParam) {
@@ -37,7 +47,7 @@ export default function EntryPage() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !indexNo || !nicNo) return;
+    if (!email || !indexNo || !nicNo || !token) return;
     
     setLoading(true);
     setError(null);
@@ -47,7 +57,7 @@ export default function EntryPage() {
       const res = await fetch('/api/student/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, index_no: indexNo, nic_no: nicNo }),
+        body: JSON.stringify({ email, index_no: indexNo, nic_no: nicNo, token }),
       });
 
       const data = await res.json();
@@ -81,20 +91,12 @@ export default function EntryPage() {
             <GraduationCap className="h-6 w-6" />
           </div>
           <div>
-            <span className="text-[10px] font-bold tracking-wider text-slate-500 dark:text-slate-400 block uppercase leading-none">University Office</span>
-            <span className="text-base font-extrabold tracking-tight text-slate-900 dark:text-white mt-1 block">Unified Graduation Portal</span>
+            <span className="text-base font-extrabold tracking-tight text-slate-900 dark:text-white block">Graduation Registration Portal</span>
+            <span className="text-[10px] font-bold tracking-wider text-slate-500 dark:text-slate-400 block uppercase mt-0.5">Rajarata University of Sri Lanka</span>
           </div>
         </div>
         <div className="flex items-center gap-3">
           <ThemeToggle />
-          <Button
-            variant="outline"
-            onClick={() => router.push('/admin')}
-            className="border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/40 hover:bg-slate-100 dark:hover:bg-slate-900 text-slate-700 dark:text-slate-300 hover:text-slate-950 dark:hover:text-white gap-2 rounded-xl text-xs font-semibold"
-          >
-            <ShieldCheck className="h-4 w-4 text-blue-500" />
-            Exam Division Login
-          </Button>
         </div>
       </header>
 
@@ -102,27 +104,20 @@ export default function EntryPage() {
       <main className="flex-1 flex flex-col lg:flex-row items-center justify-center gap-12 max-w-7xl mx-auto w-full px-6 py-12">
         {/* Left column: Info section */}
         <div className="flex-1 space-y-6 lg:max-w-md">
+          {/* University crest logo */}
+          <div className="flex items-center">
+            <img src="/templates/RUSL.png" alt="Rajarata University of Sri Lanka Logo" className="w-30 h-25 object-contain" />
+          </div>
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 text-xs font-semibold border border-blue-500/20 dark:border-blue-500/25">
-            2026 Academic Session
+            Convocation {new Date().getFullYear()}
           </div>
           <h1 className="text-4xl sm:text-5xl font-black tracking-tight leading-none text-slate-900 dark:text-white">
-            Secure Student <br />
-            <span className="bg-gradient-to-r from-blue-600 to-blue-500 dark:from-blue-400 dark:to-blue-600 bg-clip-text text-transparent">Self-Service Console</span>
+            Student <br />
+            <span className="bg-gradient-to-r from-blue-600 to-blue-500 dark:from-blue-400 dark:to-blue-600 bg-clip-text text-transparent">Registration Console</span>
           </h1>
           <p className="text-slate-600 dark:text-slate-400 text-sm leading-relaxed">
-            Welcome to the secure graduation registration system. Here you can verify your academic credentials, request name spelling corrections, upload graduation documentation (photo & slips), and confirm attendance.
+            Welcome to the graduation registration system of Rajarata University of Sri Lanka. Here you can verify your academic credentials, request name spelling corrections, upload graduation documentation (photo & slips), and confirm attendance.
           </p>
-
-          <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-200 dark:border-slate-900">
-            <div className="space-y-1">
-              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Security Protocol</span>
-              <span className="text-sm font-bold text-slate-800 dark:text-slate-300">PostgreSQL RLS</span>
-            </div>
-            <div className="space-y-1">
-              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Login MFA</span>
-              <span className="text-sm font-bold text-slate-800 dark:text-slate-300">Secure OTP</span>
-            </div>
-          </div>
         </div>
 
         {/* Right column: Login Card */}
@@ -157,16 +152,16 @@ export default function EntryPage() {
                       <Input
                         id="email"
                         type="email"
-                        placeholder="student@science.cmb.ac.lk"
+                        placeholder="student@uni.ac.lk"
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
                         required
-                        disabled={isEmailLocked}
+                        disabled={isEmailLocked || isTokenMissing}
                         className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl pl-10 text-sm h-11 disabled:opacity-75 disabled:cursor-not-allowed"
                       />
                       <Mail className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-400 dark:text-slate-600" />
                     </div>
-                    {isEmailLocked && (
+                    {isEmailLocked && !isTokenMissing && (
                       <p className="text-[10px] text-blue-600 dark:text-blue-400 font-bold mt-1">
                         ✓ Email pre-filled and locked from verification link.
                       </p>
@@ -185,7 +180,8 @@ export default function EntryPage() {
                         value={indexNo}
                         onChange={(e) => setIndexNo(e.target.value)}
                         required
-                        className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl pl-10 text-sm h-11"
+                        disabled={isTokenMissing}
+                        className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl pl-10 text-sm h-11 disabled:opacity-75"
                       />
                       <KeyRound className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-400 dark:text-slate-600" />
                     </div>
@@ -203,7 +199,8 @@ export default function EntryPage() {
                         value={nicNo}
                         onChange={(e) => setNicNo(e.target.value)}
                         required
-                        className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl pl-10 text-sm h-11"
+                        disabled={isTokenMissing}
+                        className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl pl-10 text-sm h-11 disabled:opacity-75"
                       />
                       <ShieldCheck className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-400 dark:text-slate-600" />
                     </div>
@@ -211,13 +208,13 @@ export default function EntryPage() {
 
                   <Button
                     type="submit"
-                    disabled={loading}
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold h-11 rounded-xl mt-2 relative transition-colors shadow-lg shadow-blue-500/20"
+                    disabled={loading || isTokenMissing}
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold h-11 rounded-xl mt-2 relative transition-colors shadow-lg shadow-blue-500/20 disabled:opacity-50"
                   >
                     {loading ? (
                       <Loader2 className="h-5 w-5 animate-spin mx-auto text-white" />
                     ) : (
-                      'Verify & Enter Portal'
+                      'Verify & Enter'
                     )}
                   </Button>
                 </form>
@@ -228,7 +225,7 @@ export default function EntryPage() {
 
       {/* Footer */}
       <footer className="border-t border-slate-200 dark:border-slate-900 py-6 text-center text-xs text-slate-500 dark:text-slate-600 transition-colors duration-200">
-        © 2026 University Exam Division. Enforced Row-Level Secure Environment. All rights reserved.
+        © {new Date().getFullYear()} Exam Division, Rajarata University of Sri Lanka, All Rights Reserved.
       </footer>
     </div>
   );

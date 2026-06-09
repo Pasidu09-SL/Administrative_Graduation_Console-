@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server';
 import { runAsAdmin } from '@/lib/db';
-import { isRegistrationWindowOpen, signToken } from '@/lib/auth';
+import { isRegistrationWindowOpen, signToken, verifyMagicToken } from '@/lib/auth';
 
 export async function POST(req: Request) {
   try {
-    const { email, index_no, nic_no } = await req.json();
-    if (!email || !index_no || !nic_no) {
-      return NextResponse.json({ success: false, error: 'Email, Index Number, and NIC Number are required.' }, { status: 400 });
+    const { email, index_no, nic_no, token } = await req.json();
+    if (!email || !index_no || !nic_no || !token) {
+      return NextResponse.json({ success: false, error: 'Email, Index Number, NIC Number, and Verification Token are required.' }, { status: 400 });
     }
 
     // Check registration window status
@@ -14,6 +14,18 @@ export async function POST(req: Request) {
     const { isOpen } = await isRegistrationWindowOpen(mockTime);
     if (!isOpen) {
       return NextResponse.json({ success: false, error: 'Portal Closed', code: 'PORTAL_CLOSED' }, { status: 403 });
+    }
+
+    // Verify magic token signature and expiration
+    const payload = verifyMagicToken(token);
+    if (!payload) {
+      return NextResponse.json({ success: false, error: 'Your registration link is invalid or has expired. Please request a new link from the Exam Division.' }, { status: 401 });
+    }
+
+    // Ensure the token's email and index number match the login input
+    if (payload.email.toLowerCase().trim() !== email.toLowerCase().trim() ||
+        payload.index_no.trim() !== index_no.trim()) {
+      return NextResponse.json({ success: false, error: 'Token credentials mismatch. Please use the unique link sent to your email.' }, { status: 401 });
     }
 
     // Verify student details (case-insensitive for email, strict for index number and NIC)
@@ -29,19 +41,24 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: 'Student record not found or credential mismatch.' }, { status: 401 });
     }
 
-    // Create session token
-    const token = signToken({ email: student.email.toLowerCase().trim(), index_no: student.index_no.trim() });
+    // Create session token with remaining magic link lifetime
+    const sessionToken = signToken({
+      email: student.email.toLowerCase().trim(),
+      index_no: student.index_no.trim(),
+      magicTokenExp: payload.exp
+    });
 
     const response = NextResponse.json({ success: true, message: 'Authentication successful.' });
     
-    // Set HTTP-only cookie
+    // Set HTTP-only cookie to expire when the magic token expires
+    const maxAge = Math.max(0, Math.floor((payload.exp - Date.now()) / 1000));
     response.cookies.set({
       name: 'student_session',
-      value: token,
+      value: sessionToken,
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
-      maxAge: 7 * 24 * 60 * 60, // 7 days
+      maxAge,
       path: '/'
     });
 

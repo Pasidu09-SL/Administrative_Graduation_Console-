@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { verifyToken } from '@/lib/auth';
+import { verifyToken, isRegistrationWindowOpen } from '@/lib/auth';
 import { runAsStudent } from '@/lib/db';
 import fs from 'fs';
 import path from 'path';
@@ -19,6 +19,16 @@ export async function POST(req: Request) {
     const payload = verifyToken(sessionToken);
     if (!payload) {
       return NextResponse.json({ success: false, error: 'Unauthorized session' }, { status: 401 });
+    }
+
+    // Check registration window status
+    const mockTime = req.headers.get('x-mock-time');
+    const { isOpen } = await isRegistrationWindowOpen(mockTime);
+    if (!isOpen) {
+      return NextResponse.json({
+        success: false,
+        error: 'Portal Closed: Registration access is currently inactive outside the configured timeline.'
+      }, { status: 403 });
     }
 
     // Check lock status before allowing upload

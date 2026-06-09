@@ -72,9 +72,9 @@ export async function POST(req: Request) {
       );
       let nextSeat = parseInt(maxSeatRes.rows[0].max_seat) + 1;
 
-      // 4. Fetch students of this faculty in alphabetical index number sequence who are approved
+      // 4. Fetch students of this faculty in alphabetical index number sequence who are approved and attending
       const studentsRes = await client.query(
-        "SELECT id FROM students WHERE faculty = $1 AND verification_status = 'Approved' ORDER BY index_no ASC",
+        "SELECT id FROM students WHERE faculty = $1 AND verification_status = 'Approved' AND attending_convocation = TRUE ORDER BY index_no ASC",
         [faculty]
       );
       const studentIds = studentsRes.rows.map(r => r.id);

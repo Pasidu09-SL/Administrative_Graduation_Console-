@@ -389,8 +389,9 @@ async function runTests() {
     const perfJson = await perfRes.json();
     if (perfRes.status === 200 && perfJson.success) {
       console.log(`✓ Success: Batch insert of ${perfJson.count} students executed in ${perfJson.durationMs}ms.`);
-      if (perfJson.durationMs > 2000) {
-        throw new Error(`Performance Test Failed! DB batch execution took ${perfJson.durationMs}ms (threshold 2000ms).`);
+      const threshold = isRemote ? 10000 : 2000;
+      if (perfJson.durationMs > threshold) {
+        throw new Error(`Performance Test Failed! DB batch execution took ${perfJson.durationMs}ms (threshold ${threshold}ms).`);
       }
     } else {
       throw new Error(`Performance Test Failed! Ingest commit failed: ${JSON.stringify(perfJson)}`);
@@ -416,13 +417,15 @@ async function runTests() {
     }
 
     // Attempt student login targeting mock student
+    const magicTokenTest5 = signMagicToken('student1@uni.ac.lk', 'INDEX-260001');
     const loginRes = await fetch(`${BASE_URL}/api/student/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         email: 'student1@uni.ac.lk',
         index_no: 'INDEX-260001',
-        nic_no: 'NIC-260001'
+        nic_no: 'NIC-260001',
+        token: magicTokenTest5
       })
     });
 
@@ -458,10 +461,11 @@ async function runTests() {
     const st1Nic = 'NIC-260001';
 
     // Verify credentials and capture the session cookie directly
+    const magicTokenTest6 = signMagicToken(st1Email, st1Index);
     const verifyRes = await fetch(`${BASE_URL}/api/student/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: st1Email, index_no: st1Index, nic_no: st1Nic })
+      body: JSON.stringify({ email: st1Email, index_no: st1Index, nic_no: st1Nic, token: magicTokenTest6 })
     });
 
     const cookieHeader = verifyRes.headers.get('set-cookie');
@@ -574,6 +578,7 @@ async function runTests() {
         name_correction_request: 'Student One Name Override',
         profile_photo_path: '/uploads/student1_photo.png',
         payment_slip_path: '/uploads/student1_slip.pdf',
+        attending_convocation: true,
         attendance_confirmed: true // This locks profile!
       })
     });
@@ -636,8 +641,8 @@ async function runTests() {
     // ----------------------------------------------------
     console.log('\n[TEST 10] Running Seating Allocation Algorithmic Edge Case Test...');
     
-    // Approve all students so they are eligible for seating allocation
-    await pool.query("UPDATE students SET verification_status = 'Approved'");
+    // Approve all students so they are eligible for seating allocation, and set them as attending
+    await pool.query("UPDATE students SET verification_status = 'Approved', attending_convocation = TRUE");
 
     // Assign "Faculty of Applied Science" (250 students) to Session 1
     const assignFac1 = await fetch(`${BASE_URL}/api/admin/sessions`, {
@@ -765,8 +770,8 @@ async function runTests() {
     const redirectUrl = magicLoginRes.headers.get('location');
     
     if (magicLoginRes.status === 307 || magicLoginRes.status === 302) {
-      if (redirectUrl && redirectUrl.includes(`/?email=${encodeURIComponent(testEmail)}`)) {
-        console.log('✓ Success: Magic login accepted valid token, redirected to login page with prefilled email.');
+      if (redirectUrl && redirectUrl.includes(`/?email=${encodeURIComponent(testEmail)}`) && redirectUrl.includes('token=')) {
+        console.log('✓ Success: Magic login accepted valid token, redirected to login page with prefilled email and token.');
       } else {
         throw new Error(`Magic login redirect validation failed. Redirect Location: ${redirectUrl}`);
       }

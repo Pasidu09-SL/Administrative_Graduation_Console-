@@ -11,14 +11,28 @@ import {
 import { ThemeToggle } from '@/components/ThemeToggle';
 import {
   GraduationCap, Plus, Upload, Check, X, ShieldAlert,
-  Loader2, Calendar, Clock, ArrowRight, UserCheck, Trash2, Download, RefreshCw, AlertCircle, FileText, LogOut
+  Loader2, Calendar, Clock, ArrowRight, UserCheck, Trash2, Download, RefreshCw, AlertCircle, FileText, LogOut, Edit
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useRouter } from 'next/navigation';
 
 export default function AdminDashboard() {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<'degrees' | 'ingest' | 'timeline' | 'audit' | 'seating' | 'print'>('degrees');
+  const [activeTab, setActiveTab] = useState<'degrees' | 'ingest' | 'timeline' | 'audit' | 'seating' | 'print' | 'accounts'>('degrees');
+
+  // Staff Authentication States
+  const [staffUser, setStaffUser] = useState<any | null>(null);
+  const [sessionChecked, setSessionChecked] = useState(false);
+  const [loginUsername, setLoginUsername] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState<string | null>(null);
+
+  // Staff Account Registry States
+  const [staffList, setStaffList] = useState<any[]>([]);
+  const [newStaffUsername, setNewStaffUsername] = useState('');
+  const [newStaffPassword, setNewStaffPassword] = useState('');
+  const [newStaffName, setNewStaffName] = useState('');
+  const [newStaffRole, setNewStaffRole] = useState<'Staff' | 'Administrator'>('Staff');
 
   // Updated official Faculty Names according to user request
   const FACULTIES = [
@@ -45,9 +59,17 @@ export default function AdminDashboard() {
   const [degTa, setDegTa] = useState('');
   const [degType, setDegType] = useState<'Internal' | 'External'>('Internal');
 
+  // Edit degree states
+  const [editingDegree, setEditingDegree] = useState<any | null>(null);
+  const [editEn, setEditEn] = useState('');
+  const [editSi, setEditSi] = useState('');
+  const [editTa, setEditTa] = useState('');
+  const [editType, setEditType] = useState<'Internal' | 'External'>('Internal');
+
   // 2. INGESTION STATE
   const [ingestFile, setIngestFile] = useState<File | null>(null);
   const [ingestFaculty, setIngestFaculty] = useState(FACULTIES[0]);
+  const [ingestDegreeId, setIngestDegreeId] = useState('');
   const [stagingResults, setStagingResults] = useState<any[]>([]);
   const [isValidBatch, setIsValidBatch] = useState(false);
   const [showStagingModal, setShowStagingModal] = useState(false);
@@ -64,6 +86,8 @@ export default function AdminDashboard() {
   const [selectedStudent, setSelectedStudent] = useState<any>(null);
   const [filterFaculty, setFilterFaculty] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
+  const [filterAttending, setFilterAttending] = useState('');
+  const [filterResponseStatus, setFilterResponseStatus] = useState<string>('pending');
   const [rejectReason, setRejectReason] = useState('');
   const [showRejectDialog, setShowRejectDialog] = useState(false);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
@@ -79,6 +103,22 @@ export default function AdminDashboard() {
   // ----------------------------------------------------
   // DATA FETCHING HOOKS
   // ----------------------------------------------------
+  const checkSession = async () => {
+    try {
+      const res = await fetch('/api/admin/auth/session');
+      const json = await res.json();
+      if (res.ok && json.success) {
+        setStaffUser(json.user);
+      } else {
+        setStaffUser(null);
+      }
+    } catch {
+      setStaffUser(null);
+    } finally {
+      setSessionChecked(true);
+    }
+  };
+
   const loadDegrees = async () => {
     const res = await fetch('/api/degrees');
     const json = await res.json();
@@ -100,6 +140,8 @@ export default function AdminDashboard() {
     const query = new URLSearchParams();
     if (filterFaculty) query.append('faculty', filterFaculty);
     if (filterStatus) query.append('status', filterStatus);
+    if (filterAttending) query.append('attending', filterAttending);
+    if (filterResponseStatus) query.append('responseStatus', filterResponseStatus);
 
     const res = await fetch(`/api/admin/review?${query.toString()}`);
     const json = await res.json();
@@ -129,14 +171,37 @@ export default function AdminDashboard() {
     if (res.ok) setPrintStatus(json.data);
   };
 
+  const loadStaff = async () => {
+    try {
+      const res = await fetch('/api/admin/staff');
+      const json = await res.json();
+      if (res.ok && json.success) {
+        setStaffList(json.data);
+      }
+    } catch (err) {
+      console.error('Failed to load staff list:', err);
+    }
+  };
+
+  // Check session on page mount
   useEffect(() => {
-    loadDegrees();
-    loadTimeline();
-    loadStudents();
-    loadAuditLogs();
-    loadSessionAllocations();
-    loadPrintStatus();
-  }, [activeTab, filterFaculty, filterStatus]);
+    checkSession();
+  }, []);
+
+  // Fetch dashboard data if authenticated
+  useEffect(() => {
+    if (staffUser) {
+      loadDegrees();
+      loadTimeline();
+      loadStudents();
+      loadAuditLogs();
+      loadSessionAllocations();
+      loadPrintStatus();
+      if (staffUser.role === 'Administrator') {
+        loadStaff();
+      }
+    }
+  }, [activeTab, filterFaculty, filterStatus, filterAttending, filterResponseStatus, staffUser]);
 
   // Periodic polling for PDF worker status
   useEffect(() => {
@@ -157,6 +222,163 @@ export default function AdminDashboard() {
     } else {
       setErrorMsg(msg);
       setTimeout(() => setErrorMsg(null), 5000);
+    }
+  };
+
+  // Auto-calculate degree_no for selected faculty
+  useEffect(() => {
+    const facultyDegrees = degrees.filter(d => d.faculty === degFaculty);
+    const nextNo = facultyDegrees.length > 0 
+      ? Math.max(...facultyDegrees.map(d => d.degree_no)) + 1 
+      : 1;
+    setDegNo(String(nextNo));
+  }, [degFaculty, degrees]);
+
+  // Ingestion selected degree cascade
+  useEffect(() => {
+    const facultyDegrees = degrees.filter(d => d.faculty === ingestFaculty);
+    if (facultyDegrees.length > 0) {
+      setIngestDegreeId(facultyDegrees[0].id);
+    } else {
+      setIngestDegreeId('');
+    }
+  }, [ingestFaculty, degrees]);
+
+  // Edit / Update degree handlers
+  const handleEditClick = (deg: any) => {
+    setEditingDegree(deg);
+    setEditEn(deg.name_en);
+    setEditSi(deg.name_si);
+    setEditTa(deg.name_ta);
+    setEditType(deg.type);
+  };
+
+  const handleUpdateDegree = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingDegree) return;
+    setLoading(true);
+    try {
+      const res = await fetch('/api/degrees', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: editingDegree.id,
+          name_en: editEn,
+          name_si: editSi,
+          name_ta: editTa,
+          type: editType
+        })
+      });
+      const json = await res.json();
+      if (res.ok) {
+        triggerAlert(true, 'Degree details updated successfully!');
+        setEditingDegree(null);
+        loadDegrees();
+      } else {
+        triggerAlert(false, json.error || 'Failed to update degree.');
+      }
+    } catch {
+      triggerAlert(false, 'Network error.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError(null);
+    setLoading(true);
+    try {
+      const res = await fetch('/api/admin/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: loginUsername, password: loginPassword })
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        setStaffUser(json.user);
+        setLoginUsername('');
+        setLoginPassword('');
+      } else {
+        setLoginError(json.error || 'Invalid username or password.');
+      }
+    } catch {
+      setLoginError('A network error occurred. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/admin/auth/logout', { method: 'POST' });
+      if (res.ok) {
+        setStaffUser(null);
+        setActiveTab('degrees');
+        triggerAlert(true, 'Logged out successfully.');
+      } else {
+        triggerAlert(false, 'Logout failed.');
+      }
+    } catch {
+      triggerAlert(false, 'Network error during logout.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCreateStaff = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const res = await fetch('/api/admin/staff', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: newStaffUsername,
+          password: newStaffPassword,
+          name: newStaffName,
+          role: newStaffRole
+        })
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        triggerAlert(true, `Successfully created account for ${newStaffName}!`);
+        setNewStaffUsername('');
+        setNewStaffPassword('');
+        setNewStaffName('');
+        setNewStaffRole('Staff');
+        loadStaff();
+      } else {
+        triggerAlert(false, json.error || 'Failed to create staff account.');
+      }
+    } catch {
+      triggerAlert(false, 'Network error.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteDegree = async (id: string) => {
+    if (!window.confirm('Are you sure you want to delete this degree? This action cannot be undone.')) {
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/degrees?id=${id}`, {
+        method: 'DELETE'
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        triggerAlert(true, 'Degree deleted successfully!');
+        loadDegrees();
+      } else {
+        triggerAlert(false, json.error || 'Failed to delete degree.');
+      }
+    } catch {
+      triggerAlert(false, 'Network error.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -208,6 +430,16 @@ export default function AdminDashboard() {
     setIngestFile(file);
     if (!file) return;
 
+    if (!ingestDegreeId) {
+      triggerAlert(false, 'Please select a Target Degree program first.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      setIngestFile(null);
+      return;
+    }
+
+    const selectedDegree = degrees.find(d => d.id === ingestDegreeId);
+    const selectedDegreeName = selectedDegree ? selectedDegree.name_en : '';
+
     setLoading(true);
     const reader = new FileReader();
     reader.onload = async (evt) => {
@@ -218,7 +450,7 @@ export default function AdminDashboard() {
         const ws = wb.Sheets[wsname];
         
         // Parse rows by index based on specified order:
-        // no, reg no, index no, full name, name with initials, gpa, class, degree, email, address, contact no
+        // No, Name with Initials, Full Name, Registration No, Index No, Effective Date, Class, Final GPA, NIC No, Email Address, Postal Address, Contact No
         const data: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
         if (data.length === 0) {
           triggerAlert(false, 'Uploaded Excel sheet is empty.');
@@ -246,17 +478,17 @@ export default function AdminDashboard() {
           if (r.every(cell => cell === undefined || cell === null || cell === '')) continue;
           
           mappedRows.push({
-            registration_no: r[1] !== undefined && r[1] !== null ? String(r[1]).trim() : '',
-            index_no: r[2] !== undefined && r[2] !== null ? String(r[2]).trim() : '',
-            nic_no: r[3] !== undefined && r[3] !== null ? String(r[3]).trim() : '',
-            full_name: r[4] !== undefined && r[4] !== null ? String(r[4]).trim() : '',
-            name_with_initials: r[5] !== undefined && r[5] !== null ? String(r[5]).trim() : '',
-            gpa: r[6] !== undefined && r[6] !== null && r[6] !== '' ? r[6] : null,
-            class: r[7] !== undefined && r[7] !== null ? String(r[7]).trim() : '',
-            degree_name: r[8] !== undefined && r[8] !== null ? String(r[8]).trim() : '',
+            name_with_initials: r[1] !== undefined && r[1] !== null ? String(r[1]).trim() : '',
+            full_name: r[2] !== undefined && r[2] !== null ? String(r[2]).trim() : '',
+            registration_no: r[3] !== undefined && r[3] !== null ? String(r[3]).trim() : '',
+            index_no: r[4] !== undefined && r[4] !== null ? String(r[4]).trim() : '',
+            class: r[6] !== undefined && r[6] !== null ? String(r[6]).trim() : '',
+            gpa: r[7] !== undefined && r[7] !== null && r[7] !== '' ? r[7] : null,
+            nic_no: r[8] !== undefined && r[8] !== null ? String(r[8]).trim() : '',
             email: r[9] !== undefined && r[9] !== null ? String(r[9]).trim() : '',
             address: r[10] !== undefined && r[10] !== null ? String(r[10]).trim() : '',
             contact_no: r[11] !== undefined && r[11] !== null ? String(r[11]).trim() : '',
+            degree_name: selectedDegreeName,
             faculty: ingestFaculty
           });
         }
@@ -572,6 +804,131 @@ export default function AdminDashboard() {
     );
   };
 
+  if (!sessionChecked) {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center font-sans">
+        <Loader2 className="h-8 w-8 text-blue-600 animate-spin" />
+        <span className="text-xs font-bold text-slate-555 mt-2">Authenticating Session...</span>
+      </div>
+    );
+  }
+
+  if (!staffUser) {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-50 flex flex-col relative overflow-hidden transition-colors duration-200 font-sans">
+        {/* Background Gradient Glows */}
+        <div className="absolute top-[-10%] right-[-10%] w-[500px] h-[500px] rounded-full bg-blue-600/5 dark:bg-blue-600/10 blur-[120px] pointer-events-none" />
+        <div className="absolute bottom-[-10%] left-[-10%] w-[500px] h-[500px] rounded-full bg-blue-500/5 dark:bg-blue-500/10 blur-[120px] pointer-events-none" />
+
+        {/* Top Navbar */}
+        <header className="border-b border-slate-200 dark:border-slate-900 bg-white/70 dark:bg-slate-950/70 backdrop-blur-md sticky top-0 z-50 px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-blue-600/10 dark:bg-blue-600/20 text-blue-600 dark:text-blue-500 rounded-xl border border-blue-500/20 dark:border-blue-500/30">
+              <GraduationCap className="h-6 w-6" />
+            </div>
+            <div>
+              <span className="text-base font-extrabold tracking-tight text-slate-900 dark:text-white block">Exam Division Portal</span>
+              <span className="text-[10px] font-bold tracking-wider text-slate-500 dark:text-slate-400 block uppercase mt-0.5">Rajarata University of Sri Lanka</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <ThemeToggle />
+          </div>
+        </header>
+
+        {/* Login Form Container */}
+        <main className="flex-1 flex flex-col lg:flex-row items-center justify-center gap-12 max-w-7xl mx-auto w-full px-6 py-12">
+          {/* Left column: Info section */}
+          <div className="flex-1 space-y-6 lg:max-w-md">
+            <div className="flex items-center">
+              <img src="/templates/RUSL.png" alt="Rajarata University of Sri Lanka Logo" className="w-30 h-25 object-contain" />
+            </div>
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 text-xs font-semibold border border-blue-500/20 dark:border-blue-500/25">
+              Administrative Gateway
+            </div>
+            <h1 className="text-4xl sm:text-5xl font-black tracking-tight leading-none text-slate-900 dark:text-white">
+              Administrative <br />
+              <span className="bg-gradient-to-r from-blue-600 to-blue-500 dark:from-blue-400 dark:to-blue-600 bg-clip-text text-transparent">Graduation Console</span>
+            </h1>
+            <p className="text-slate-600 dark:text-slate-400 text-sm leading-relaxed">
+              Secure access portal for Exam Division staff and system administrators. Enter credentials to manage degree registries, process student registries, control portals, audit submissions, and trigger certificate compilation queues.
+            </p>
+          </div>
+
+          {/* Right column: Login Card */}
+          <div className="w-full max-w-md">
+            <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-3xl shadow-xl relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-full h-[3px] bg-gradient-to-r from-blue-500 via-sky-500 to-blue-600" />
+              <CardHeader className="space-y-1 pb-6">
+                <CardTitle className="text-xl font-extrabold text-slate-900 dark:text-white">Staff Authenticator</CardTitle>
+                <CardDescription className="text-xs text-slate-500 dark:text-slate-400">
+                  Enter credentials to access administrative systems.
+                </CardDescription>
+              </CardHeader>
+
+              <CardContent>
+                {loginError && (
+                  <div className="mb-4 p-3 bg-red-50 dark:bg-red-950/45 border border-red-200 dark:border-red-500/35 text-red-700 dark:text-red-300 rounded-xl text-xs font-semibold">
+                    {loginError}
+                  </div>
+                )}
+
+                <form onSubmit={handleLogin} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="loginUsername" className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
+                      Username
+                    </Label>
+                    <Input
+                      id="loginUsername"
+                      type="text"
+                      placeholder="admin"
+                      value={loginUsername}
+                      onChange={(e) => setLoginUsername(e.target.value)}
+                      required
+                      className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl text-sm h-11"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="loginPassword" className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
+                      Password
+                    </Label>
+                    <Input
+                      id="loginPassword"
+                      type="password"
+                      placeholder="••••••••"
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      required
+                      className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl text-sm h-11"
+                    />
+                  </div>
+
+                  <Button
+                    type="submit"
+                    disabled={loading}
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold h-11 rounded-xl mt-2 relative transition-colors shadow-lg shadow-blue-500/20"
+                  >
+                    {loading ? (
+                      <Loader2 className="h-5 w-5 animate-spin mx-auto text-white" />
+                    ) : (
+                      'Sign In'
+                    )}
+                  </Button>
+                </form>
+              </CardContent>
+            </Card>
+          </div>
+        </main>
+
+        {/* Footer */}
+        <footer className="border-t border-slate-200 dark:border-slate-900 py-6 text-center text-xs text-slate-500 dark:text-slate-600 transition-colors duration-200">
+          © {new Date().getFullYear()} Exam Division, Rajarata University of Sri Lanka, All Rights Reserved.
+        </footer>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-50 flex flex-col font-sans transition-colors duration-200">
       {/* Top Navbar */}
@@ -587,13 +944,6 @@ export default function AdminDashboard() {
         </div>
         <div className="flex items-center gap-4">
           <ThemeToggle />
-          <Button
-            variant="ghost"
-            onClick={() => router.push('/')}
-            className="text-slate-500 dark:text-slate-400 hover:text-slate-950 dark:hover:text-white text-xs font-semibold"
-          >
-            ← Back to Student Portal
-          </Button>
         </div>
       </header>
 
@@ -601,7 +951,7 @@ export default function AdminDashboard() {
       <div className="flex-1 w-full flex flex-col md:flex-row">
         
         {/* Left Side Sidebar Navigation */}
-        <aside className="w-full md:w-72 flex flex-col justify-between border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/40 p-6 md:sticky md:top-[73px] md:h-[calc(100vh-73px)] gap-6 shrink-0 z-40 transition-colors">
+        <aside className="w-full md:w-72 flex flex-col justify-between border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/40 p-6 md:fixed md:top-[73px] md:left-0 md:h-[calc(100vh-73px)] gap-6 shrink-0 z-40 transition-colors">
           <div className="flex flex-col gap-2">
             {[
               { id: 'degrees', label: 'Course Manager' },
@@ -609,7 +959,8 @@ export default function AdminDashboard() {
               { id: 'timeline', label: 'Timeline Control' },
               { id: 'audit', label: 'Split Audit Center' },
               { id: 'seating', label: 'Session and Seating' },
-              { id: 'print', label: 'Certificate Generation' }
+              { id: 'print', label: 'Certificate Generation' },
+              ...(staffUser?.role === 'Administrator' ? [{ id: 'accounts', label: 'Account Management' }] : [])
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -628,16 +979,16 @@ export default function AdminDashboard() {
           <div className="border-t border-slate-200 dark:border-slate-800 pt-4 mt-auto space-y-3">
             <div className="flex items-center gap-3 px-2">
               <div className="h-8 w-8 rounded-full bg-blue-600/10 dark:bg-blue-600/20 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold text-xs border border-blue-500/20">
-                EC
+                {staffUser?.name ? staffUser.name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase() : 'EC'}
               </div>
               <div>
-                <div className="text-[11px] font-bold text-slate-800 dark:text-slate-200 leading-none">Exam Coordinator</div>
-                <div className="text-[9px] text-slate-555 dark:text-slate-500 font-medium mt-1">Exam Division Staff</div>
+                <div className="text-[11px] font-bold text-slate-800 dark:text-slate-200 leading-none">{staffUser?.name || 'Exam Coordinator'}</div>
+                <div className="text-[9px] text-slate-555 dark:text-slate-500 font-medium mt-1">{staffUser?.role || 'Exam Division Staff'}</div>
               </div>
             </div>
             <Button
               variant="outline"
-              onClick={() => router.push('/')}
+              onClick={handleLogout}
               className="w-full border-red-200 dark:border-red-950/40 hover:bg-red-50 dark:hover:bg-red-950/20 text-red-655 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 rounded-xl text-xs font-bold gap-2 h-9"
             >
               <LogOut className="h-4 w-4" />
@@ -647,7 +998,7 @@ export default function AdminDashboard() {
         </aside>
 
         {/* Right Side Main Workspaces */}
-        <main className="flex-1 min-w-0 p-8 space-y-6 bg-slate-50/50 dark:bg-slate-950/20">
+        <main className="flex-1 min-w-0 md:ml-72 p-8 space-y-6 bg-slate-50/50 dark:bg-slate-950/20">
           {successMsg && (
             <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-500/30 text-emerald-700 dark:text-emerald-300 rounded-xl text-xs font-bold flex items-center gap-2">
               <Check className="h-4 w-4" />
@@ -686,13 +1037,9 @@ export default function AdminDashboard() {
                           ))}
                         </select>
                       </div>
-                      <div className="space-y-1.5">
-                        <Label htmlFor="degNo" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Degree No</Label>
-                        <Input id="degNo" type="number" required min="1" value={degNo} onChange={(e) => setDegNo(e.target.value)} placeholder="e.g. 1" className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 text-xs rounded-lg h-9" />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label htmlFor="degCode" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Degree Code</Label>
-                        <Input id="degCode" required value={degCode} onChange={(e) => setDegCode(e.target.value)} placeholder="BSc-CS" className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 text-xs rounded-lg h-9" />
+                       <Label htmlFor="degEn" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Degree No</Label>
+                      <div className="p-3 bg-slate-100/50 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-900 rounded-xl space-y-1">
+                        <div className="text-xs font-boldtext-slate-900 dark:text-slate-100 mt-1"> {degNo} </div>
                       </div>
                       <div className="space-y-1.5">
                         <Label htmlFor="degEn" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Degree Name (English)</Label>
@@ -740,17 +1087,18 @@ export default function AdminDashboard() {
                           <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">Code</TableHead>
                           <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">Name (English / Sinhala / Tamil)</TableHead>
                           <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">Type</TableHead>
+                          <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3 text-right">Action</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody className="divide-y divide-slate-100 dark:divide-slate-900 font-medium">
                         {degrees.length === 0 ? (
                           <TableRow>
-                            <TableCell colSpan={5} className="text-center py-8 text-slate-500">No degrees registered. Add one using the form.</TableCell>
+                            <TableCell colSpan={6} className="text-center py-8 text-slate-500">No degrees registered. Add one using the form.</TableCell>
                           </TableRow>
                         ) : (
                           degrees.map((d) => (
                             <TableRow key={d.id} className="border-b border-slate-200 dark:border-slate-900 hover:bg-slate-100/30 dark:hover:bg-slate-900/10 transition-colors">
-                              <TableCell className="px-4 py-2.5 text-slate-800 dark:text-slate-350">{d.faculty}</TableCell>
+                              <TableCell className="px-4 py-2.5 text-slate-800 dark:text-white">{d.faculty}</TableCell>
                               <TableCell className="px-4 py-2.5 font-bold text-slate-900 dark:text-white">{d.degree_no}</TableCell>
                               <TableCell className="px-4 py-2.5 font-bold text-slate-900 dark:text-white">{d.code}</TableCell>
                               <TableCell className="px-4 py-2.5 text-slate-800 dark:text-slate-300">
@@ -763,6 +1111,26 @@ export default function AdminDashboard() {
                                 }`}>
                                   {d.type}
                                 </span>
+                              </TableCell>
+                              <TableCell className="px-4 py-2.5 text-right flex items-center justify-end gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleEditClick(d)}
+                                  className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950/20 rounded-xl"
+                                  title="Edit Degree details"
+                                >
+                                  <Edit className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleDeleteDegree(d.id)}
+                                  className="h-8 w-8 text-red-650 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-xl"
+                                  title="Delete Degree"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
                               </TableCell>
                             </TableRow>
                           ))
@@ -791,13 +1159,35 @@ export default function AdminDashboard() {
                         id="ingestFaculty"
                         value={ingestFaculty}
                         onChange={(e) => setIngestFaculty(e.target.value)}
-                        className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-300 px-3 py-2.5 rounded-lg focus:outline-none h-10"
+                        className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-white px-3 py-2.5 rounded-lg focus:outline-none h-10"
                       >
                         {FACULTIES.map((f) => <option key={f} value={f}>{f}</option>)}
                       </select>
                     </div>
 
-                    <div className="space-y-1.5 col-span-2">
+                    <div className="space-y-1.5 col-span-1">
+                      <Label htmlFor="ingestDegree" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Target Degree</Label>
+                      <select
+                        id="ingestDegree"
+                        value={ingestDegreeId}
+                        onChange={(e) => setIngestDegreeId(e.target.value)}
+                        className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-white px-3 py-2.5 rounded-lg focus:outline-none h-10"
+                      >
+                        {degrees.filter(d => d.faculty === ingestFaculty).length === 0 ? (
+                          <option value="">No Degrees Registered</option>
+                        ) : (
+                          degrees
+                            .filter(d => d.faculty === ingestFaculty)
+                            .map((d) => (
+                              <option key={d.id} value={d.id}>
+                                {d.name_en} ({d.type})
+                              </option>
+                            ))
+                        )}
+                      </select>
+                    </div>
+
+                    <div className="space-y-1.5 col-span-1">
                       <Label htmlFor="excelFile" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Select Excel / CSV Registry Sheet</Label>
                       <Input
                         ref={fileInputRef}
@@ -805,8 +1195,8 @@ export default function AdminDashboard() {
                         type="file"
                         accept=".xlsx, .xls, .csv"
                         onChange={handleIngestFileChange}
-                        disabled={loading}
-                        className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 text-xs file:bg-blue-600/10 file:border-0 file:text-blue-600 dark:file:text-blue-500 file:text-xs file:font-semibold file:px-3 file:py-1.5 file:mr-3 rounded-lg cursor-pointer h-10"
+                        disabled={loading || !ingestDegreeId}
+                        className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 text-xs file:bg-blue-600/10 file:border-0 file:text-blue-600 dark:file:text-blue-500 file:text-xs file:font-semibold file:px-3 file:py-1.5 file:mr-3 rounded-lg cursor-pointer h-10 disabled:opacity-50 disabled:cursor-not-allowed"
                       />
                     </div>
                   </div>
@@ -965,6 +1355,26 @@ export default function AdminDashboard() {
                   <option value="Approved">Approved</option>
                   <option value="Name Correction Requested">Name Correction Requested</option>
                 </select>
+
+                <select
+                  value={filterAttending}
+                  onChange={(e) => setFilterAttending(e.target.value)}
+                  className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-350 px-3 py-2 rounded-xl focus:outline-none"
+                >
+                  <option value="">All Attendance</option>
+                  <option value="true">Attending Convocation</option>
+                  <option value="false">Not Attending (In Absentia)</option>
+                </select>
+
+                <select
+                  value={filterResponseStatus}
+                  onChange={(e) => setFilterResponseStatus(e.target.value)}
+                  className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-350 px-3 py-2 rounded-xl focus:outline-none"
+                >
+                  <option value="pending">Pending Responses (Default)</option>
+                  <option value="submitted">Responses Submitted</option>
+                  <option value="all">All Candidates</option>
+                </select>
               </div>
 
               {students.length === 0 ? (
@@ -992,12 +1402,25 @@ export default function AdminDashboard() {
                         >
                           <div className="flex items-center justify-between">
                             <span className="text-xs font-bold">{st.name_with_initials}</span>
-                            <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${
-                              st.verification_status === 'Approved' ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' :
-                              st.verification_status === 'Name Correction Requested' ? 'bg-yellow-500/15 text-yellow-600 dark:text-yellow-400' : 'bg-blue-500/15 text-blue-600 dark:text-blue-400'
-                            }`}>
-                              {st.verification_status === 'Pending Verification' ? 'Pending' : st.verification_status === 'Approved' ? 'Approved' : 'Correction'}
-                            </span>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${
+                                st.attendance_confirmed ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                              }`}>
+                                {st.attendance_confirmed ? 'Submitted' : 'Pending'}
+                              </span>
+                              <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${
+                                st.attending_convocation === true ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400' :
+                                st.attending_convocation === false ? 'bg-slate-500/15 text-slate-500 dark:text-slate-400' : 'bg-yellow-500/15 text-yellow-600 dark:text-yellow-400'
+                              }`}>
+                                {st.attending_convocation === true ? 'Attending' : st.attending_convocation === false ? 'In Absentia' : 'Undecided'}
+                              </span>
+                              <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${
+                                st.verification_status === 'Approved' ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' :
+                                st.verification_status === 'Name Correction Requested' ? 'bg-yellow-500/15 text-yellow-600 dark:text-yellow-400' : 'bg-blue-500/15 text-blue-600 dark:text-blue-400'
+                              }`}>
+                                {st.verification_status === 'Pending Verification' ? 'Pending' : st.verification_status === 'Approved' ? 'Approved' : 'Correction'}
+                              </span>
+                            </div>
                           </div>
                           <div className="text-[10px] flex items-center justify-between text-slate-400 dark:text-slate-500 font-mono">
                             <span>{st.index_no}</span>
@@ -1040,6 +1463,17 @@ export default function AdminDashboard() {
                         {/* LEFT: Faculty Registry */}
                         <div className="pr-4 space-y-4">
                           <h4 className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Original Faculty Import</h4>
+
+                          <div className="space-y-1">
+                            <span className="text-[9px] text-slate-400 dark:text-slate-600 font-bold block">CONVOCATION ATTENDANCE</span>
+                            <span className={`text-xs font-bold px-2 py-0.5 rounded inline-block ${
+                              selectedStudent.attending_convocation === true ? 'bg-blue-500/10 border border-blue-200 dark:border-blue-500/20 text-blue-600 dark:text-blue-400' :
+                              selectedStudent.attending_convocation === false ? 'bg-slate-500/10 border border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400' :
+                              'bg-yellow-500/10 border border-yellow-250/20 text-yellow-600 dark:text-yellow-400'
+                            }`}>
+                              {selectedStudent.attending_convocation === true ? 'Attending Convocation Day' : selectedStudent.attending_convocation === false ? 'Not Attending (In Absentia)' : 'Undecided / No Response yet'}
+                            </span>
+                          </div>
                           
                           <div className="space-y-1">
                             <span className="text-[9px] text-slate-400 dark:text-slate-600 font-bold block">FULL NAME</span>
@@ -1357,6 +1791,100 @@ export default function AdminDashboard() {
               </Card>
             </div>
           )}
+
+          {/* 7. STAFF ACCOUNT MANAGEMENT WORKSPACE */}
+          {activeTab === 'accounts' && staffUser?.role === 'Administrator' && (
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Form to Add Account */}
+                <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-2xl lg:col-span-1 shadow-sm">
+                  <CardHeader>
+                    <CardTitle className="text-base font-bold text-slate-950 dark:text-white">Create Administrative Account</CardTitle>
+                    <CardDescription className="text-[11px] text-slate-555">Register new staff members or administrators.</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <form onSubmit={handleCreateStaff} className="space-y-4">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="newStaffName" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Full Name</Label>
+                        <Input id="newStaffName" required value={newStaffName} onChange={(e) => setNewStaffName(e.target.value)} placeholder="e.g. John Doe" className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 text-xs rounded-lg h-9" />
+                      </div>
+                      
+                      <div className="space-y-1.5">
+                        <Label htmlFor="newStaffUsername" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Username</Label>
+                        <Input id="newStaffUsername" required value={newStaffUsername} onChange={(e) => setNewStaffUsername(e.target.value)} placeholder="e.g. johnd" className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 text-xs rounded-lg h-9" />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label htmlFor="newStaffPassword" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Password</Label>
+                        <Input id="newStaffPassword" required type="password" value={newStaffPassword} onChange={(e) => setNewStaffPassword(e.target.value)} placeholder="••••••••" className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 text-xs rounded-lg h-9" />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label htmlFor="newStaffRole" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Role</Label>
+                        <select
+                          id="newStaffRole"
+                          value={newStaffRole}
+                          onChange={(e) => setNewStaffRole(e.target.value as any)}
+                          className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-300 px-3 py-2 rounded-lg focus:outline-none h-9"
+                        >
+                          <option value="Staff">Staff</option>
+                          <option value="Administrator">Administrator</option>
+                        </select>
+                      </div>
+
+                      <Button type="submit" disabled={loading} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold h-9 text-xs rounded-lg mt-2 shadow">
+                        {loading ? <Loader2 className="h-4 w-4 animate-spin mx-auto text-white" /> : 'Create Account'}
+                      </Button>
+                    </form>
+                  </CardContent>
+                </Card>
+
+                {/* Table displaying staff list */}
+                <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-2xl lg:col-span-2 shadow-sm">
+                  <CardHeader>
+                    <CardTitle className="text-base font-bold text-slate-950 dark:text-white">Administrative Staff Registry</CardTitle>
+                    <CardDescription className="text-[11px] text-slate-555">Currently configured system accounts.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="p-0 overflow-hidden border-t border-slate-100 dark:border-slate-900">
+                    <Table className="text-xs">
+                      <TableHeader className="bg-slate-100/50 dark:bg-slate-950/50">
+                        <TableRow className="border-b border-slate-200 dark:border-slate-900">
+                          <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">Full Name</TableHead>
+                          <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">Username</TableHead>
+                          <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">Role</TableHead>
+                          <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3 text-right">Created Date</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody className="divide-y divide-slate-100 dark:divide-slate-900 font-medium">
+                        {staffList.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={4} className="text-center py-8 text-slate-555">No staff members found.</TableCell>
+                          </TableRow>
+                        ) : (
+                          staffList.map((staff) => (
+                            <TableRow key={staff.id} className="border-b border-slate-200 dark:border-slate-900 hover:bg-slate-100/30 dark:hover:bg-slate-900/10 transition-colors">
+                              <TableCell className="px-4 py-2.5 text-slate-800 dark:text-white font-bold">{staff.name}</TableCell>
+                              <TableCell className="px-4 py-2.5 text-slate-900 dark:text-white font-mono">{staff.username}</TableCell>
+                              <TableCell className="px-4 py-2.5">
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                  staff.role === 'Administrator' ? 'bg-purple-500/10 text-purple-650 dark:text-purple-400 border border-purple-200 dark:border-purple-500/20' : 'bg-slate-500/10 text-slate-650 dark:text-slate-400 border border-slate-200 dark:border-slate-800'
+                                }`}>
+                                  {staff.role}
+                                </span>
+                              </TableCell>
+                              <TableCell className="px-4 py-2.5 text-right text-slate-555 dark:text-slate-500">
+                                {new Date(staff.created_at).toLocaleDateString()}
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+          )}
         </main>
       </div>
       
@@ -1391,9 +1919,91 @@ export default function AdminDashboard() {
         </div>
       )}
 
+      {/* Edit Degree Modal */}
+      {editingDegree && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <Card className="border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 w-full max-w-md rounded-3xl relative shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <CardHeader className="pb-4 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base font-bold text-slate-950 dark:text-white">
+                  Edit Degree Details
+                </CardTitle>
+                <button
+                  type="button"
+                  onClick={() => setEditingDegree(null)}
+                  className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-850 rounded-lg text-slate-400 dark:text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </CardHeader>
+            <CardContent className="p-6">
+              <form onSubmit={handleUpdateDegree} className="space-y-4">
+                <div className="space-y-1">
+                  <span className="text-[10px] uppercase font-bold text-slate-500 block">Faculty</span>
+                  <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">{editingDegree.faculty}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <span className="text-[10px] uppercase font-bold text-slate-500 block">Degree No</span>
+                    <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">{editingDegree.degree_no}</span>
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-[10px] uppercase font-bold text-slate-500 block">Degree Code</span>
+                    <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">{editingDegree.code}</span>
+                  </div>
+                </div>
+                
+                <div className="space-y-1.5">
+                  <Label htmlFor="editEn" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Degree Name (English)</Label>
+                  <Input id="editEn" required value={editEn} onChange={(e) => setEditEn(e.target.value)} className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 text-xs rounded-lg h-9" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="editSi" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Degree Name (Sinhala)</Label>
+                  <Input id="editSi" required value={editSi} onChange={(e) => setEditSi(e.target.value)} className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 text-xs rounded-lg h-9" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="editTa" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Degree Name (Tamil)</Label>
+                  <Input id="editTa" required value={editTa} onChange={(e) => setEditTa(e.target.value)} className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 text-xs rounded-lg h-9" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="editType" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Degree Type</Label>
+                  <select
+                    id="editType"
+                    value={editType}
+                    onChange={(e) => setEditType(e.target.value as any)}
+                    className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-350 px-3 py-2 rounded-lg focus:outline-none h-9"
+                  >
+                    <option value="Internal">Internal</option>
+                    <option value="External">External</option>
+                  </select>
+                </div>
+                <div className="flex justify-end gap-2 pt-4 border-t border-slate-100 dark:border-slate-800">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setEditingDegree(null)}
+                    className="border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-950 text-slate-700 dark:text-slate-350 rounded-lg text-xs font-semibold h-9"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    disabled={loading}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold h-9 text-xs rounded-lg px-4"
+                  >
+                    {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save Changes'}
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
       {/* Footer */}
       <footer className="border-t border-slate-200 dark:border-slate-900 py-6 text-center text-xs text-slate-500 dark:text-slate-600 mt-12 transition-colors duration-200">
-        © 2026 University Exam Division. Enforced Row-Level Secure Environment. All rights reserved.
+        © {new Date().getFullYear()} Exam Division, Rajarata University of Sri Lanka, All Rights Reserved.
       </footer>
     </div>
   );

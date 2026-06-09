@@ -7,6 +7,7 @@ const SECRET = process.env.JWT_ACCESS_SECRET || 'university-graduation-system-se
 export interface AuthUser {
   email: string;
   index_no: string;
+  magicTokenExp?: number;
 }
 
 export function signToken(payload: AuthUser): string {
@@ -22,7 +23,11 @@ export function verifyToken(token: string): AuthUser | null {
     const data = Buffer.from(dataBase64, 'base64').toString('utf8');
     const expectedSignature = crypto.createHmac('sha256', SECRET).update(data).digest('hex');
     if (signature !== expectedSignature) return null;
-    return JSON.parse(data);
+    const payload = JSON.parse(data);
+    if (payload.magicTokenExp && Date.now() > payload.magicTokenExp) {
+      return null;
+    }
+    return payload;
   } catch {
     return null;
   }
@@ -98,7 +103,7 @@ export function signMagicToken(email: string, index_no: string): string {
   return `${Buffer.from(data).toString('base64')}.${signature}`;
 }
 
-export function verifyMagicToken(token: string): { email: string; index_no: string } | null {
+export function verifyMagicToken(token: string): { email: string; index_no: string; exp: number } | null {
   try {
     const [dataBase64, signature] = token.split('.');
     if (!dataBase64 || !signature) return null;
@@ -107,7 +112,7 @@ export function verifyMagicToken(token: string): { email: string; index_no: stri
     if (signature !== expectedSignature) return null;
     const payload = JSON.parse(data);
     if (Date.now() > payload.exp) return null;
-    return { email: payload.email, index_no: payload.index_no };
+    return { email: payload.email, index_no: payload.index_no, exp: payload.exp };
   } catch {
     return null;
   }
