@@ -30,6 +30,7 @@ CREATE TABLE degrees (
   name_si VARCHAR(255) NOT NULL,
   name_ta VARCHAR(255) NOT NULL,
   type VARCHAR(50) NOT NULL CHECK (type IN ('Internal', 'External')),
+  import_order SERIAL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT unique_faculty_degree_no UNIQUE (faculty, degree_no)
@@ -123,7 +124,7 @@ CREATE TABLE otp_codes (
 CREATE TABLE audit_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   admin_id VARCHAR(255) NOT NULL,
-  student_id UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  student_id UUID REFERENCES students(id) ON DELETE CASCADE,
   action_taken TEXT NOT NULL,
   timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -21,29 +21,50 @@ export default function EntryPage() {
   const [info, setInfo] = useState<string | null>(null);
   const [isEmailLocked, setIsEmailLocked] = useState(false);
   const [isTokenMissing, setIsTokenMissing] = useState(false);
+  const [hasToken, setHasToken] = useState<boolean | null>(null);
 
-  React.useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      const emailParam = params.get('email');
-      const tokenParam = params.get('token');
-      if (emailParam) {
-        setEmail(emailParam);
-        setIsEmailLocked(true);
-      }
-      if (tokenParam) {
-        setToken(tokenParam);
-        setIsTokenMissing(false);
-      } else {
-        setIsTokenMissing(true);
-        setError('Access Denied: Please use the unique registration link sent to your email to access this portal.');
-      }
-      const errorParam = params.get('error');
-      if (errorParam) {
-        setError(errorParam);
-      }
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const emailParam = params.get('email');
+    const tokenParam = params.get('token');
+    
+    if (!tokenParam) {
+      setHasToken(false);
+      window.location.replace('/admin');
+      return;
+    }
+
+    if (emailParam) {
+      setEmail(emailParam);
+      setIsEmailLocked(true);
+    }
+    setToken(tokenParam);
+    setIsTokenMissing(false);
+    setHasToken(true);
+
+    const errorParam = params.get('error');
+    if (errorParam) {
+      setError(errorParam);
     }
   }, []);
+
+  if (hasToken === null) {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center font-sans">
+        <Loader2 className="h-8 w-8 text-blue-600 animate-spin" />
+        <span className="text-xs font-bold text-slate-500 mt-2">Checking session parameters...</span>
+      </div>
+    );
+  }
+
+  if (hasToken === false) {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center font-sans">
+        <Loader2 className="h-8 w-8 text-blue-600 animate-spin" />
+        <span className="text-xs font-bold text-slate-500 mt-2">Redirecting to Admin Portal...</span>
+      </div>
+    );
+  }
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();

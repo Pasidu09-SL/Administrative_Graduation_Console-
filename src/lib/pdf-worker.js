@@ -10,51 +10,62 @@ async function generate() {
   try {
     const { students, outputPath, templateDir } = workerData;
 
-    // Load background templates from public/templates
+    // Load templates ONCE
     const templates = {
-      internal_front: fs.readFileSync(path.join(templateDir, 'internal_front.pdf')),
-      internal_back: fs.readFileSync(path.join(templateDir, 'internal_back.pdf')),
-      external_front: fs.readFileSync(path.join(templateDir, 'external_front.pdf')),
-      external_back: fs.readFileSync(path.join(templateDir, 'external_back.pdf'))
+      internal_front: await PDFDocument.load(fs.readFileSync(path.join(templateDir, 'internal_front.pdf'))),
+      internal_back: await PDFDocument.load(fs.readFileSync(path.join(templateDir, 'internal_back.pdf'))),
+      external_front: await PDFDocument.load(fs.readFileSync(path.join(templateDir, 'external_front.pdf'))),
+      external_back: await PDFDocument.load(fs.readFileSync(path.join(templateDir, 'external_back.pdf')))
     };
 
     // Load TrueType Fonts for Sinhala and Tamil rendering
     const fontSiBytes = fs.readFileSync(path.join(templateDir, 'AbhayaLibre-Regular.ttf'));
     const fontTaBytes = fs.readFileSync(path.join(templateDir, 'Pavanam-Regular.ttf'));
 
-    // Create a new master PDF document
+    // Create a new master PDF document and register shaper once
     const masterDoc = await PDFDocument.create();
+    masterDoc.registerFontkit(fontkit);
+
+    // Embed fonts ONCE in the master document
+    const timesBold = await masterDoc.embedFont(StandardFonts.TimesRomanBold);
+    const timesRoman = await masterDoc.embedFont(StandardFonts.TimesRoman);
+    const timesItalic = await masterDoc.embedFont(StandardFonts.TimesRomanItalic);
+    const fontSi = await masterDoc.embedFont(fontSiBytes);
+    const fontTa = await masterDoc.embedFont(fontTaBytes);
+
     let processedCount = 0;
 
     for (const student of students) {
       const isInternal = student.degree_type === 'Internal';
-      const frontBytes = isInternal ? templates.internal_front : templates.external_front;
-      const backBytes = isInternal ? templates.internal_back : templates.external_back;
+      const frontTemplate = isInternal ? templates.internal_front : templates.external_front;
+      const backTemplate = isInternal ? templates.internal_back : templates.external_back;
+
+      // Copy pages to master document
+      const [frontPage] = await masterDoc.copyPages(frontTemplate, [0]);
+      const [backPage] = await masterDoc.copyPages(backTemplate, [0]);
+
+      // Add cloned template pages to the master document
+      masterDoc.addPage(frontPage);
+      masterDoc.addPage(backPage);
 
       // ----------------------------------------------------
       // FRONT PAGE (English layout)
       // ----------------------------------------------------
-      const frontDoc = await PDFDocument.load(frontBytes);
-      const frontFontBold = await frontDoc.embedFont(StandardFonts.TimesRomanBold);
-      const frontFontRoman = await frontDoc.embedFont(StandardFonts.TimesRoman);
-
-      const frontPages = frontDoc.getPages();
-      const frontPage = frontPages[0];
 
       // 1. Draw dynamic student full name centered (with auto-scaling, All Caps, single-line)
       const nameText = (student.full_name || '').toUpperCase();
       let nameSize = 26;
-      let nameWidth = frontFontBold.widthOfTextAtSize(nameText, nameSize);
+      let nameWidth = timesBold.widthOfTextAtSize(nameText, nameSize);
       while (nameWidth > 481.89 && nameSize > 16) {
         nameSize -= 0.5;
-        nameWidth = frontFontBold.widthOfTextAtSize(nameText, nameSize);
+        nameWidth = timesBold.widthOfTextAtSize(nameText, nameSize);
       }
       const nameX = (frontPage.getWidth() - nameWidth) / 2;
       frontPage.drawText(nameText, {
         x: nameX,
         y: 490,
         size: nameSize,
-        font: frontFontBold,
+        font: timesBold,
         color: rgb(0.1, 0.1, 0.1)
       });
 
@@ -69,7 +80,7 @@ async function generate() {
       let currentLine = '';
       for (const word of words) {
         const testLine = currentLine ? `${currentLine} ${word}` : word;
-        const width = frontFontBold.widthOfTextAtSize(testLine, degSize);
+        const width = timesBold.widthOfTextAtSize(testLine, degSize);
         if (width > maxDegWidth) {
           lines.push(currentLine);
           currentLine = word;
@@ -88,7 +99,7 @@ async function generate() {
         currentLine = '';
         for (const word of words) {
           const testLine = currentLine ? `${currentLine} ${word}` : word;
-          const width = frontFontBold.widthOfTextAtSize(testLine, degSize);
+          const width = timesBold.widthOfTextAtSize(testLine, degSize);
           if (width > maxDegWidth) {
             lines.push(currentLine);
             currentLine = word;
@@ -104,12 +115,12 @@ async function generate() {
       // Draw the degree lines
       let currentY = lines.length === 2 ? 415 : 405;
       for (const line of lines) {
-        const w = frontFontBold.widthOfTextAtSize(line, degSize);
+        const w = timesBold.widthOfTextAtSize(line, degSize);
         frontPage.drawText(line, {
           x: (frontPage.getWidth() - w) / 2,
           y: currentY,
           size: degSize,
-          font: frontFontBold,
+          font: timesBold,
           color: rgb(0.1, 0.1, 0.1)
         });
         currentY -= (degSize + 5);
@@ -118,46 +129,36 @@ async function generate() {
       // 3. Draw conferment details dates
       const dateDigital = "15th January 2023";
       const line1Text = `on ${dateDigital}`;
-      const line1Width = frontFontRoman.widthOfTextAtSize(line1Text, 12);
+      const line1Width = timesRoman.widthOfTextAtSize(line1Text, 12);
       frontPage.drawText(line1Text, {
         x: (frontPage.getWidth() - line1Width) / 2,
         y: 350,
         size: 12,
-        font: frontFontRoman,
+        font: timesRoman,
         color: rgb(0.15, 0.15, 0.15)
       });
 
       const dateWords = "Twenty Seventh Day of July in the Year Two Thousand Twenty Three";
       const line5Text = `held on ${dateWords}`;
-      const line5Width = frontFontRoman.widthOfTextAtSize(line5Text, 12);
+      const line5Width = timesRoman.widthOfTextAtSize(line5Text, 12);
       frontPage.drawText(line5Text, {
         x: (frontPage.getWidth() - line5Width) / 2,
         y: 245,
         size: 12,
-        font: frontFontRoman,
+        font: timesRoman,
         color: rgb(0.15, 0.15, 0.15)
       });
-
-      const modifiedFrontBytes = await frontDoc.save();
 
       // ----------------------------------------------------
       // BACK PAGE (Sinhala / Tamil translation layout)
       // ----------------------------------------------------
-      const backDoc = await PDFDocument.load(backBytes);
-      backDoc.registerFontkit(fontkit);
-      const backFontBold = await backDoc.embedFont(StandardFonts.TimesRomanBold);
-      const fontSi = await backDoc.embedFont(fontSiBytes);
-      const fontTa = await backDoc.embedFont(fontTaBytes);
-
-      const backPages = backDoc.getPages();
-      const backPage = backPages[0];
 
       // 1. Draw dynamic certificate number
       backPage.drawText(`Certificate # ${student.certificate_number}`, {
         x: 430,
         y: 735,
         size: 9,
-        font: backFontBold,
+        font: timesBold,
         color: rgb(0.1, 0.1, 0.1)
       });
 
@@ -228,7 +229,7 @@ async function generate() {
 
       const isInternalCand = student.degree_type === 'Internal';
       
-      // Draw Pre-wrapped Sinhala preamble to save measuring time
+      // Draw Pre-wrapped Sinhala preamble
       const preambleSiLines = isInternalCand
         ? [
             "මෙම විශ්වවිද්‍යාලයේ අභ්‍යන්තර අපේක්ෂකයෙකු ලෙස",
@@ -257,7 +258,6 @@ async function generate() {
 
       const siDegreeText = student.degree_name_si || '';
       nextYSi -= 3;
-      // Draw dynamic degree name centered in the column
       nextYSi = drawDynamicColumnText(backPage, siDegreeText, fontSi, 11, 45, 275, nextYSi, 4);
 
       nextYSi -= 2;
@@ -319,7 +319,6 @@ async function generate() {
 
       const taDegreeText = student.degree_name_ta || '';
       nextYTa -= 3;
-      // Draw dynamic degree name centered in the column
       nextYTa = drawDynamicColumnText(backPage, taDegreeText, fontTa, 10, 320, 550, nextYTa, 4);
 
       nextYTa -= 2;
@@ -383,21 +382,6 @@ async function generate() {
         size: 8,
         color: rgb(0.2, 0.2, 0.2)
       });
-
-      const modifiedBackBytes = await backDoc.save();
-
-      // ----------------------------------------------------
-      // MERGE INTO MASTER DOCUMENT
-      // ----------------------------------------------------
-      const tempFrontDoc = await PDFDocument.load(modifiedFrontBytes);
-      const tempBackDoc = await PDFDocument.load(modifiedBackBytes);
-
-      const [copiedFront] = await masterDoc.copyPages(tempFrontDoc, [0]);
-      const [copiedBack] = await masterDoc.copyPages(tempBackDoc, [0]);
-
-      // Alternating duplex mapping
-      masterDoc.addPage(copiedFront);
-      masterDoc.addPage(copiedBack);
 
       processedCount++;
       if (parentPort) {

@@ -52,7 +52,41 @@ export async function isRegistrationWindowOpen(mockTimeHeader?: string | null): 
   const openTime = new Date(activeWindow.open_date);
   const closeTime = new Date(activeWindow.close_date);
 
-  const isOpen = checkTime >= openTime && checkTime <= closeTime && !activeWindow.is_manually_closed;
+  const isScheduledOpen = checkTime >= openTime && checkTime <= closeTime;
+  const isOpen = isScheduledOpen && !activeWindow.is_manually_closed;
+
+  // Dynamically record automatic timeline open/close transitions if not manually closed
+  if (!activeWindow.is_manually_closed) {
+    try {
+      await runAsAdmin(async (client) => {
+        const lastLogRes = await client.query(`
+          SELECT action_taken, timestamp 
+          FROM audit_logs 
+          WHERE admin_id = 'System' 
+            AND (action_taken = 'Portal opened automatically' OR action_taken = 'Portal closed automatically')
+          ORDER BY timestamp DESC LIMIT 1
+        `);
+        const lastLog = lastLogRes.rows[0];
+
+        if (isScheduledOpen) {
+          if (!lastLog || lastLog.action_taken === 'Portal closed automatically') {
+            await client.query(
+              "INSERT INTO audit_logs (admin_id, action_taken, student_id) VALUES ('System', 'Portal opened automatically', NULL)"
+            );
+          }
+        } else {
+          if (lastLog && lastLog.action_taken === 'Portal opened automatically') {
+            await client.query(
+              "INSERT INTO audit_logs (admin_id, action_taken, student_id) VALUES ('System', 'Portal closed automatically', NULL)"
+            );
+          }
+        }
+      });
+    } catch (err) {
+      console.error('Error logging automatic portal state transition:', err);
+    }
+  }
+
   return { isOpen, window: activeWindow };
 }
 

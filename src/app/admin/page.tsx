@@ -37,11 +37,11 @@ export default function AdminDashboard() {
   // Updated official Faculty Names according to user request
   const FACULTIES = [
     'Faculty of Technology',
-    'Faculty of Applied Science',
+    'Faculty of Applied Sciences',
     'Faculty of Management Studies',
-    'Faculty of Social Science and Humanities',
+    'Faculty of Social Sciences & Humanities',
     'Faculty of Agriculture',
-    'Faculty of Medicine and Allied Science'
+    'Faculty of Medicine and Allied Sciences'
   ];
 
   // Global loading / error
@@ -66,13 +66,27 @@ export default function AdminDashboard() {
   const [editTa, setEditTa] = useState('');
   const [editType, setEditType] = useState<'Internal' | 'External'>('Internal');
 
+  const [filterRegFaculty, setFilterRegFaculty] = useState('');
+  const [filterRegType, setFilterRegType] = useState('');
+
+  const filteredDegrees = React.useMemo(() => {
+    return degrees.filter(d => {
+      if (filterRegFaculty && d.faculty !== filterRegFaculty) return false;
+      if (filterRegType && d.type !== filterRegType) return false;
+      return true;
+    });
+  }, [degrees, filterRegFaculty, filterRegType]);
+
   // 2. INGESTION STATE
   const [ingestFile, setIngestFile] = useState<File | null>(null);
-  const [ingestFaculty, setIngestFaculty] = useState(FACULTIES[0]);
+  const [ingestFaculty, setIngestFaculty] = useState('');
   const [ingestDegreeId, setIngestDegreeId] = useState('');
   const [stagingResults, setStagingResults] = useState<any[]>([]);
   const [isValidBatch, setIsValidBatch] = useState(false);
   const [showStagingModal, setShowStagingModal] = useState(false);
+  const [degreeStagingResults, setDegreeStagingResults] = useState<any[]>([]);
+  const [isDegreeBatchValid, setIsDegreeBatchValid] = useState(false);
+  const [showDegreeStagingModal, setShowDegreeStagingModal] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 3. TIMELINE STATE
@@ -87,18 +101,61 @@ export default function AdminDashboard() {
   const [filterFaculty, setFilterFaculty] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [filterAttending, setFilterAttending] = useState('');
-  const [filterResponseStatus, setFilterResponseStatus] = useState<string>('pending');
+  const [filterResponseStatus, setFilterResponseStatus] = useState<string>('all');
   const [rejectReason, setRejectReason] = useState('');
   const [showRejectDialog, setShowRejectDialog] = useState(false);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
 
+  // Admin logs filter states
+  const [logSearchActor, setLogSearchActor] = useState('');
+  const [logSearchQuery, setLogSearchQuery] = useState('');
+  const [logSearchAction, setLogSearchAction] = useState('');
+  const [logDateFrom, setLogDateFrom] = useState('');
+  const [logDateTo, setLogDateTo] = useState('');
+
+  const filteredAuditLogs = React.useMemo(() => {
+    return auditLogs.filter(log => {
+      if (logSearchActor && !log.admin_id.toLowerCase().includes(logSearchActor.toLowerCase())) {
+        return false;
+      }
+      if (logSearchQuery) {
+        const query = logSearchQuery.toLowerCase();
+        const matchesStudent = 
+          log.name_with_initials?.toLowerCase().includes(query) ||
+          log.index_no?.toLowerCase().includes(query) ||
+          log.email?.toLowerCase().includes(query);
+        if (!matchesStudent) return false;
+      }
+      if (logSearchAction && !log.action_taken.toLowerCase().includes(logSearchAction.toLowerCase())) {
+        return false;
+      }
+      if (logDateFrom && new Date(log.timestamp) < new Date(logDateFrom)) {
+        return false;
+      }
+      if (logDateTo) {
+        const toDate = new Date(logDateTo);
+        toDate.setHours(23, 59, 59, 999);
+        if (new Date(log.timestamp) > toDate) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [auditLogs, logSearchActor, logSearchQuery, logSearchAction, logDateFrom, logDateTo]);
+
   // 5. SEATING STATE
   const [sessionAllocations, setSessionAllocations] = useState<any[]>([]);
-  const [allocateFaculty, setAllocateFaculty] = useState(FACULTIES[0]);
+  const [allocateFaculty, setAllocateFaculty] = useState('Faculty of Technology (Internal)');
   const [allocateSession, setAllocateSession] = useState('1');
 
   // 6. CERTIFICATE PRINT STATE
   const [printStatus, setPrintStatus] = useState<any>({ status: 'idle', current: 0, total: 0, error: null, outputPath: null });
+  const [printFaculty, setPrintFaculty] = useState('');
+  const [printDegreeId, setPrintDegreeId] = useState('');
+
+  useEffect(() => {
+    setPrintDegreeId('');
+  }, [printFaculty]);
 
   // ----------------------------------------------------
   // DATA FETCHING HOOKS
@@ -236,13 +293,8 @@ export default function AdminDashboard() {
 
   // Ingestion selected degree cascade
   useEffect(() => {
-    const facultyDegrees = degrees.filter(d => d.faculty === ingestFaculty);
-    if (facultyDegrees.length > 0) {
-      setIngestDegreeId(facultyDegrees[0].id);
-    } else {
-      setIngestDegreeId('');
-    }
-  }, [ingestFaculty, degrees]);
+    setIngestDegreeId('');
+  }, [ingestFaculty]);
 
   // Edit / Update degree handlers
   const handleEditClick = (deg: any) => {
@@ -282,6 +334,300 @@ export default function AdminDashboard() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleImportDegreesExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setLoading(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = async (evt) => {
+        try {
+          const bstr = evt.target?.result;
+          const wb = XLSX.read(bstr, { type: 'binary' });
+          const wsname = wb.SheetNames[0];
+          const ws = wb.Sheets[wsname];
+          const data: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+
+          if (data.length === 0) {
+            triggerAlert(false, 'The uploaded sheet is empty.');
+            setLoading(false);
+            return;
+          }
+
+          // Dynamic header detection in the top 5 rows
+          let headerRowIdx = -1;
+          let facultyIdx = 1;
+          let degreeNoIdx = 2;
+          let nameEnIdx = 3;
+          let nameSiIdx = 4;
+          let nameTaIdx = 5;
+          let typeIdx = 6;
+
+          for (let rIdx = 0; rIdx < Math.min(data.length, 5); rIdx++) {
+            const row = data[rIdx];
+            if (row && Array.isArray(row)) {
+              let matches = 0;
+              row.forEach((cell) => {
+                if (cell !== undefined && cell !== null) {
+                  const val = String(cell).toLowerCase().trim();
+                  if (
+                    val === 'faculty' ||
+                    val.includes('f.no') ||
+                    val.includes('degree title') ||
+                    val.includes('degree type') ||
+                    val.includes('sinhala') ||
+                    val.includes('tamil') ||
+                    val.includes('english')
+                  ) {
+                    matches++;
+                  }
+                }
+              });
+              if (matches >= 2) {
+                headerRowIdx = rIdx;
+                row.forEach((cell, cIdx) => {
+                  if (cell !== undefined && cell !== null) {
+                    const val = String(cell).toLowerCase().trim();
+                    if (val === 'faculty') {
+                      facultyIdx = cIdx;
+                    } else if (
+                      val.includes('f.no') ||
+                      val.includes('f. no') ||
+                      val.includes('degree no') ||
+                      val.includes('degree number') ||
+                      val === 'fno'
+                    ) {
+                      degreeNoIdx = cIdx;
+                    } else if (val.includes('english') || val.includes('en') || val.includes('title in english')) {
+                      nameEnIdx = cIdx;
+                    } else if (val.includes('sinhala') || val.includes('si') || val.includes('title in sinhala')) {
+                      nameSiIdx = cIdx;
+                    } else if (val.includes('tamil') || val.includes('ta') || val.includes('title in tamil')) {
+                      nameTaIdx = cIdx;
+                    } else if (val.includes('type')) {
+                      typeIdx = cIdx;
+                    }
+                  }
+                });
+                break;
+              }
+            }
+          }
+
+          const startIdx = headerRowIdx !== -1 ? headerRowIdx + 1 : 1;
+
+          const parsedRows = [];
+          for (let i = startIdx; i < data.length; i++) {
+            const row = data[i];
+            if (!row || row.length === 0) continue;
+
+            const cellFaculty = row[facultyIdx];
+            const cellDegreeNo = row[degreeNoIdx];
+            const cellNameEn = row[nameEnIdx];
+            const cellNameSi = row[nameSiIdx];
+            const cellNameTa = row[nameTaIdx];
+            const cellType = row[typeIdx];
+
+            const faculty = cellFaculty !== undefined && cellFaculty !== null ? String(cellFaculty).trim() : '';
+            const degreeNoStr = cellDegreeNo !== undefined && cellDegreeNo !== null ? String(cellDegreeNo).trim() : '';
+            const nameEn = cellNameEn !== undefined && cellNameEn !== null ? String(cellNameEn).trim() : '';
+            const nameSi = cellNameSi !== undefined && cellNameSi !== null ? String(cellNameSi).trim() : '';
+            const nameTa = cellNameTa !== undefined && cellNameTa !== null ? String(cellNameTa).trim() : '';
+            const typeRaw = cellType !== undefined && cellType !== null ? String(cellType).trim() : '';
+
+            // Skip completely empty rows
+            if (!faculty && !degreeNoStr && !nameEn && !nameSi && !nameTa && !typeRaw) {
+              continue;
+            }
+
+            let type = typeRaw;
+            if (typeRaw.toLowerCase() === 'internal') {
+              type = 'Internal';
+            } else if (typeRaw.toLowerCase() === 'external') {
+              type = 'External';
+            }
+
+            let matchedFaculty = faculty;
+            if (faculty) {
+              const found = FACULTIES.find(f => f.toLowerCase() === faculty.toLowerCase());
+              if (found) {
+                matchedFaculty = found;
+              }
+            }
+
+            const degreeNo = (degreeNoStr && !isNaN(parseInt(degreeNoStr, 10))) ? parseInt(degreeNoStr, 10) : undefined;
+
+            parsedRows.push({
+              faculty: matchedFaculty || undefined,
+              degree_no: degreeNo,
+              name_en: nameEn || undefined,
+              name_si: nameSi || undefined,
+              name_ta: nameTa || undefined,
+              type: type || undefined
+            });
+          }
+
+          if (parsedRows.length === 0) {
+            triggerAlert(false, 'No valid degree records found in the sheet.');
+            setLoading(false);
+            return;
+          }
+
+          const res = await fetch('/api/degrees/import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rows: parsedRows })
+          });
+
+          const json = await res.json();
+          if (res.ok && json.success) {
+            setDegreeStagingResults(json.results);
+            setIsDegreeBatchValid(json.isValidBatch);
+            setShowDegreeStagingModal(true); // Open preview modal automatically
+            triggerAlert(true, `Excel parsed. ${json.results.length} degrees loaded into validation staging grid.`);
+          } else {
+            triggerAlert(false, json.error || 'Failed parsing bulk upload.');
+          }
+        } catch (err: any) {
+          triggerAlert(false, 'Failed parsing excel: ' + err.message);
+        } finally {
+          setLoading(false);
+          e.target.value = '';
+        }
+      };
+      reader.readAsBinaryString(file);
+    } catch (err: any) {
+      triggerAlert(false, 'File read error: ' + err.message);
+      setLoading(false);
+    }
+  };
+
+  const handleCommitDegreeImport = async () => {
+    if (!isDegreeBatchValid || degreeStagingResults.length === 0) return;
+    setLoading(true);
+    try {
+      const rowsToInsert = degreeStagingResults.map(r => r.data);
+      const res = await fetch('/api/degrees/import/commit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rows: rowsToInsert })
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        triggerAlert(true, `Successfully committed ${json.count} degree records to production database.`);
+        setDegreeStagingResults([]);
+        setShowDegreeStagingModal(false);
+        loadDegrees();
+      } else {
+        triggerAlert(false, json.error || 'Failed to commit staging records.');
+      }
+    } catch {
+      triggerAlert(false, 'Network error.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleClearDegreeStaging = () => {
+    setDegreeStagingResults([]);
+    setIsDegreeBatchValid(false);
+    setShowDegreeStagingModal(false);
+    triggerAlert(true, 'Degree staging data validation grid cleared.');
+  };
+
+  const renderDegreeStagingGrid = (isModal: boolean) => {
+    if (degreeStagingResults.length === 0) return null;
+    return (
+      <div className="space-y-4 font-sans">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h3 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+              Degree Staging Data Validation Grid
+            </h3>
+            <p className="text-[10px] text-slate-500 mt-0.5">
+              Cell highlights indicate validation issues. Double check spelling and faculty names.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {isModal && (
+              <Button
+                variant="outline"
+                onClick={() => setShowDegreeStagingModal(false)}
+                className="border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-950 text-slate-700 dark:text-slate-355 rounded-xl text-xs font-bold h-9 px-4"
+              >
+                Close Preview
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              onClick={handleClearDegreeStaging}
+              disabled={loading}
+              className="border-red-200 dark:border-red-950/40 hover:bg-red-50 dark:hover:bg-red-950/10 text-red-650 dark:text-red-400 rounded-xl text-xs font-bold h-9 px-4 flex items-center gap-1.5"
+            >
+              <Trash2 className="h-4 w-4" />
+              Clear Staging
+            </Button>
+            <Button
+              onClick={handleCommitDegreeImport}
+              disabled={loading || !isDegreeBatchValid}
+              className={`font-bold h-9 text-xs rounded-xl px-4 flex items-center gap-1.5 transition ${
+                isDegreeBatchValid 
+                  ? 'bg-blue-600 hover:bg-blue-700 text-white shadow' 
+                  : 'bg-slate-100 dark:bg-slate-900 text-slate-400 dark:text-slate-500 border border-slate-200 dark:border-slate-800'
+              }`}
+            >
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+              Commit Validated Registry
+            </Button>
+          </div>
+        </div>
+
+        <div className="border border-slate-200 dark:border-slate-900 rounded-xl overflow-x-auto overflow-y-auto max-h-[400px]">
+          <Table className="text-[11px] whitespace-nowrap min-w-[900px]">
+            <TableHeader className="bg-slate-100 dark:bg-slate-950/70 sticky top-0 z-10">
+              <TableRow className="border-b border-slate-200 dark:border-slate-900">
+                <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-3 py-2 w-12">Row</TableHead>
+                <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-3 py-2">Faculty</TableHead>
+                <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-3 py-2">F.No</TableHead>
+                <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-3 py-2">English Title</TableHead>
+                <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-3 py-2">Sinhala Title</TableHead>
+                <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-3 py-2">Tamil Title</TableHead>
+                <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-3 py-2">Type</TableHead>
+                <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-3 py-2">Errors</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody className="divide-y divide-slate-200 dark:divide-slate-900">
+              {degreeStagingResults.map((r, i) => (
+                <TableRow key={i} className={`border-b border-slate-200 dark:border-slate-900 hover:bg-slate-100/30 dark:hover:bg-slate-900/10 transition-colors ${
+                  !r.isValid ? 'bg-red-500/5 dark:bg-red-950/15' : ''
+                }`}>
+                  <TableCell className="px-3 py-2 text-slate-400 dark:text-slate-500 font-bold">{r.rowNumber}</TableCell>
+                  <TableCell className={`px-3 py-2 font-bold ${r.errors.faculty ? 'text-red-650 dark:text-red-400 bg-red-500/5 dark:bg-red-950/20' : 'text-slate-800 dark:text-slate-200'}`}>
+                    {r.data.faculty}
+                  </TableCell>
+                  <TableCell className={`px-3 py-2 ${r.errors.degree_no ? 'text-red-650 dark:text-red-400 bg-red-500/5 dark:bg-red-950/20' : 'text-slate-700 dark:text-slate-300'}`}>
+                    {r.data.degree_no}
+                  </TableCell>
+                  <TableCell className={`px-3 py-2 ${r.errors.name_en ? 'text-red-650 dark:text-red-400 bg-red-500/5 dark:bg-red-950/20 font-semibold' : 'text-slate-700 dark:text-slate-300 font-semibold'}`}>
+                    {r.data.name_en}
+                  </TableCell>
+                  <TableCell className={`px-3 py-2 ${r.errors.name_si ? 'text-red-650 dark:text-red-400 bg-red-500/5 dark:bg-red-950/20 font-semibold' : 'text-slate-800 dark:text-slate-300 font-semibold'}`}>{r.data.name_si}</TableCell>
+                  <TableCell className={`px-3 py-2 ${r.errors.name_ta ? 'text-red-650 dark:text-red-400 bg-red-500/5 dark:bg-red-950/20 font-semibold' : 'text-slate-800 dark:text-slate-300 font-semibold'}`}>{r.data.name_ta}</TableCell>
+                  <TableCell className={`px-3 py-2 ${r.errors.type ? 'text-red-650 dark:text-red-400 bg-red-500/5 dark:bg-red-950/20' : 'text-slate-750 dark:text-slate-300'}`}>
+                    {r.data.type}
+                  </TableCell>
+                  <TableCell className="px-3 py-2 text-red-650 dark:text-red-400 font-medium whitespace-normal break-words min-w-[200px]">
+                    {Object.values(r.errors).join('; ')}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </div>
+    );
   };
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -662,7 +1008,7 @@ export default function AdminDashboard() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          faculty: allocateFaculty,
+          group: allocateFaculty,
           sessionNumber: allocateSession
         })
       });
@@ -684,9 +1030,17 @@ export default function AdminDashboard() {
 
   // 6. CERTIFICATE PRINT PIPELINE
   const handleTriggerPrint = async () => {
+    if (!printFaculty || !printDegreeId) {
+      triggerAlert(false, 'Please select both Faculty and Degree before generating certificates.');
+      return;
+    }
     setLoading(true);
     try {
-      const res = await fetch('/api/admin/certificates', { method: 'POST' });
+      const res = await fetch('/api/admin/certificates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ faculty: printFaculty, degreeId: printDegreeId })
+      });
       const json = await res.json();
       if (res.status === 202) {
         triggerAlert(true, 'Duplex certificate compilation queue initiated in isolated background worker.');
@@ -923,7 +1277,7 @@ export default function AdminDashboard() {
 
         {/* Footer */}
         <footer className="border-t border-slate-200 dark:border-slate-900 py-6 text-center text-xs text-slate-500 dark:text-slate-600 transition-colors duration-200">
-          © {new Date().getFullYear()} Exam Division, Rajarata University of Sri Lanka, All Rights Reserved.
+          © {new Date().getFullYear()} Exam Division. Rajarata University of Sri Lanka. All Rights Reserved.
         </footer>
       </div>
     );
@@ -938,8 +1292,9 @@ export default function AdminDashboard() {
             <GraduationCap className="h-6 w-6" />
           </div>
           <div>
-            <span className="text-[10px] font-bold tracking-wider text-slate-500 dark:text-slate-400 block uppercase leading-none">Exam Division Portal</span>
-            <span className="text-base font-extrabold tracking-tight text-slate-900 dark:text-white mt-1 block">Administrative Graduation Console</span>
+            
+            <span className="text-base font-extrabold tracking-tight text-slate-900 dark:text-white block">Graduation Registration Portal</span>
+            <span className="text-[10px] font-bold tracking-wider text-slate-500 dark:text-slate-400 block uppercase leading-none mt-0.5">Rajarata University of Sri Lanka</span>
           </div>
         </div>
         <div className="flex items-center gap-4">
@@ -960,7 +1315,7 @@ export default function AdminDashboard() {
               { id: 'audit', label: 'Split Audit Center' },
               { id: 'seating', label: 'Session and Seating' },
               { id: 'print', label: 'Certificate Generation' },
-              ...(staffUser?.role === 'Administrator' ? [{ id: 'accounts', label: 'Account Management' }] : [])
+              ...(staffUser?.role === 'Administrator' ? [{ id: 'accounts', label: 'Admin Control Center' }] : [])
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -1006,7 +1361,7 @@ export default function AdminDashboard() {
             </div>
           )}
           {errorMsg && (
-            <div className="p-3 bg-red-50 dark:bg-red-950/45 border border-red-200 dark:border-red-500/35 text-red-700 dark:text-red-300 rounded-xl text-xs font-bold flex items-center gap-2">
+            <div className="p-3 bg-red-50 dark:bg-red-950/45 border border-red-200 dark:border-red-500/35 text-red-700 dark:text-red-300 rounded-xl text-xs font-bold flex items-center gap-2 whitespace-pre-wrap">
               <AlertCircle className="h-4 w-4" />
               {errorMsg}
             </div>
@@ -1074,33 +1429,86 @@ export default function AdminDashboard() {
 
                 {/* Table displaying Degrees */}
                 <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-2xl lg:col-span-2 shadow-sm">
-                  <CardHeader>
-                    <CardTitle className="text-base font-bold text-slate-950 dark:text-white">Degree Registry</CardTitle>
-                    <CardDescription className="text-[11px] text-slate-500">Currently configured academic programs.</CardDescription>
+                  <CardHeader className="flex flex-row items-center justify-between pb-4">
+                    <div>
+                      <CardTitle className="text-base font-bold text-slate-950 dark:text-white">Degree Registry</CardTitle>
+                      <CardDescription className="text-[11px] text-slate-500">Currently configured academic programs.</CardDescription>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {degreeStagingResults.length > 0 && (
+                        <div className="flex items-center gap-1.5 mr-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg py-1 px-2.5">
+                          <span className={`w-1.5 h-1.5 rounded-full ${isDegreeBatchValid ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                          <span className="text-[10px] font-bold text-slate-600 dark:text-slate-400 font-sans">
+                            Staging ({degreeStagingResults.length} rows)
+                          </span>
+                          <Button
+                            variant="link"
+                            onClick={() => setShowDegreeStagingModal(true)}
+                            className="p-0 text-[10px] h-auto font-bold text-blue-600 dark:text-blue-400 hover:underline ml-1"
+                          >
+                            Open Preview
+                          </Button>
+                        </div>
+                      )}
+                      <input
+                        type="file"
+                        id="degreeExcelUpload"
+                        accept=".xlsx, .xls"
+                        className="hidden"
+                        onChange={handleImportDegreesExcel}
+                      />
+                      <Button
+                        onClick={() => document.getElementById('degreeExcelUpload')?.click()}
+                        variant="outline"
+                        className="border-slate-200 dark:border-slate-850 text-blue-650 hover:text-blue-700 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/20 text-xs font-bold h-8 rounded-lg px-3 flex items-center gap-1.5"
+                      >
+                        <Upload className="h-4 w-4" />
+                        Import from Excel
+                      </Button>
+                    </div>
                   </CardHeader>
                   <CardContent className="p-0 overflow-hidden border-t border-slate-100 dark:border-slate-900">
+                    <div className="flex flex-wrap items-center gap-3 p-4 bg-slate-50/50 dark:bg-slate-900/10 border-b border-slate-100 dark:border-slate-900">
+                      <select
+                        value={filterRegFaculty}
+                        onChange={(e) => setFilterRegFaculty(e.target.value)}
+                        className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-300 px-2.5 py-1.5 rounded-lg focus:outline-none h-8 font-bold"
+                      >
+                        <option value="">All Faculties</option>
+                        {FACULTIES.map((fac) => (
+                          <option key={fac} value={fac}>{fac}</option>
+                        ))}
+                      </select>
+                      <select
+                        value={filterRegType}
+                        onChange={(e) => setFilterRegType(e.target.value)}
+                        className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-300 px-2.5 py-1.5 rounded-lg focus:outline-none h-8 font-bold"
+                      >
+                        <option value="">All Types</option>
+                        <option value="Internal">Internal</option>
+                        <option value="External">External</option>
+                      </select>
+                    </div>
                     <Table className="text-xs">
                       <TableHeader className="bg-slate-100/50 dark:bg-slate-950/50">
                         <TableRow className="border-b border-slate-200 dark:border-slate-900">
                           <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">Faculty</TableHead>
                           <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">No</TableHead>
-                          <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">Code</TableHead>
                           <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">Name (English / Sinhala / Tamil)</TableHead>
                           <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">Type</TableHead>
                           <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3 text-right">Action</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody className="divide-y divide-slate-100 dark:divide-slate-900 font-medium">
-                        {degrees.length === 0 ? (
+                        {filteredDegrees.length === 0 ? (
                           <TableRow>
-                            <TableCell colSpan={6} className="text-center py-8 text-slate-500">No degrees registered. Add one using the form.</TableCell>
+                            <TableCell colSpan={5} className="text-center py-8 text-slate-500">No degrees registered or matching selected filters.</TableCell>
                           </TableRow>
                         ) : (
-                          degrees.map((d) => (
+                          filteredDegrees.map((d) => (
                             <TableRow key={d.id} className="border-b border-slate-200 dark:border-slate-900 hover:bg-slate-100/30 dark:hover:bg-slate-900/10 transition-colors">
                               <TableCell className="px-4 py-2.5 text-slate-800 dark:text-white">{d.faculty}</TableCell>
                               <TableCell className="px-4 py-2.5 font-bold text-slate-900 dark:text-white">{d.degree_no}</TableCell>
-                              <TableCell className="px-4 py-2.5 font-bold text-slate-900 dark:text-white">{d.code}</TableCell>
                               <TableCell className="px-4 py-2.5 text-slate-800 dark:text-slate-300">
                                 <div className="font-bold text-slate-900 dark:text-white">{d.name_en}</div>
                                 <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">{d.name_si} | {d.name_ta}</div>
@@ -1161,6 +1569,7 @@ export default function AdminDashboard() {
                         onChange={(e) => setIngestFaculty(e.target.value)}
                         className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-white px-3 py-2.5 rounded-lg focus:outline-none h-10"
                       >
+                        <option value="">Select Faculty</option>
                         {FACULTIES.map((f) => <option key={f} value={f}>{f}</option>)}
                       </select>
                     </div>
@@ -1173,17 +1582,12 @@ export default function AdminDashboard() {
                         onChange={(e) => setIngestDegreeId(e.target.value)}
                         className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-white px-3 py-2.5 rounded-lg focus:outline-none h-10"
                       >
-                        {degrees.filter(d => d.faculty === ingestFaculty).length === 0 ? (
-                          <option value="">No Degrees Registered</option>
-                        ) : (
-                          degrees
-                            .filter(d => d.faculty === ingestFaculty)
-                            .map((d) => (
-                              <option key={d.id} value={d.id}>
-                                {d.name_en} ({d.type})
-                              </option>
-                            ))
-                        )}
+                        <option value="">Select Degree</option>
+                        {ingestFaculty && degrees.filter(d => d.faculty === ingestFaculty).map((d) => (
+                          <option key={d.id} value={d.id}>
+                            {d.name_en} ({d.type})
+                          </option>
+                        ))}
                       </select>
                     </div>
 
@@ -1335,11 +1739,11 @@ export default function AdminDashboard() {
             <div className="space-y-6">
               
               {/* Audit grid filters */}
-              <div className="flex flex-col sm:flex-row gap-4">
+              <div className="flex flex-col sm:flex-row gap-4 items-center flex-wrap">
                 <select
                   value={filterFaculty}
                   onChange={(e) => setFilterFaculty(e.target.value)}
-                  className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-300 px-3 py-2 rounded-xl focus:outline-none"
+                  className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-300 px-3 py-2 rounded-xl focus:outline-none h-9"
                 >
                   <option value="">All Faculties</option>
                   {FACULTIES.map(f => <option key={f} value={f}>{f}</option>)}
@@ -1348,7 +1752,7 @@ export default function AdminDashboard() {
                 <select
                   value={filterStatus}
                   onChange={(e) => setFilterStatus(e.target.value)}
-                  className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-300 px-3 py-2 rounded-xl focus:outline-none"
+                  className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-300 px-3 py-2 rounded-xl focus:outline-none h-9"
                 >
                   <option value="">All Verification Statuses</option>
                   <option value="Pending Verification">Pending Verification</option>
@@ -1359,7 +1763,7 @@ export default function AdminDashboard() {
                 <select
                   value={filterAttending}
                   onChange={(e) => setFilterAttending(e.target.value)}
-                  className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-350 px-3 py-2 rounded-xl focus:outline-none"
+                  className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-300 px-3 py-2 rounded-xl focus:outline-none h-9"
                 >
                   <option value="">All Attendance</option>
                   <option value="true">Attending Convocation</option>
@@ -1369,12 +1773,28 @@ export default function AdminDashboard() {
                 <select
                   value={filterResponseStatus}
                   onChange={(e) => setFilterResponseStatus(e.target.value)}
-                  className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-350 px-3 py-2 rounded-xl focus:outline-none"
+                  className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-300 px-3 py-2 rounded-xl focus:outline-none h-9"
                 >
-                  <option value="pending">Pending Responses (Default)</option>
-                  <option value="submitted">Responses Submitted</option>
                   <option value="all">All Candidates</option>
+                  <option value="pending">Pending Responses</option>
+                  <option value="submitted">Responses Submitted</option>
                 </select>
+
+                {/* Clear All Filters Button */}
+                {(filterFaculty !== '' || filterStatus !== '' || filterAttending !== '' || filterResponseStatus !== 'all') && (
+                  <Button
+                    onClick={() => {
+                      setFilterFaculty('');
+                      setFilterStatus('');
+                      setFilterAttending('');
+                      setFilterResponseStatus('all');
+                    }}
+                    variant="outline"
+                    className="border-slate-200 dark:border-slate-850 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white rounded-xl text-xs font-semibold h-9 px-3 flex items-center gap-1.5"
+                  >
+                    Clear Filters
+                  </Button>
+                )}
               </div>
 
               {students.length === 0 ? (
@@ -1481,8 +1901,8 @@ export default function AdminDashboard() {
                           </div>
 
                           <div className="space-y-1">
-                            <span className="text-[9px] text-slate-400 dark:text-slate-600 font-bold block">NIC NUMBER</span>
-                            <span className="text-xs font-semibold text-slate-800 dark:text-slate-300 block">{selectedStudent.nic_no || 'N/A'}</span>
+                            <span className="text-[9px] text-slate-400 dark:text-slate-600 font-bold block">DEGREE</span>
+                            <span className="text-xs font-semibold text-slate-800 dark:text-slate-300 block">{selectedStudent.degree_name_en || 'N/A'}</span>
                           </div>
 
                           <div className="space-y-1">
@@ -1571,8 +1991,14 @@ export default function AdminDashboard() {
                             <TableCell className="px-4 py-2.5 text-slate-400 dark:text-slate-500 font-mono">{new Date(log.timestamp).toLocaleString()}</TableCell>
                             <TableCell className="px-4 py-2.5 font-bold text-slate-900 dark:text-white">{log.admin_id}</TableCell>
                             <TableCell className="px-4 py-2.5 text-slate-800 dark:text-slate-300">
-                              <div>{log.name_with_initials}</div>
-                              <div className="text-[10px] text-slate-400 dark:text-slate-500 font-mono mt-0.5">{log.index_no} | {log.email}</div>
+                              {log.student_id ? (
+                                <>
+                                  <div>{log.name_with_initials}</div>
+                                  <div className="text-[10px] text-slate-400 dark:text-slate-500 font-mono mt-0.5">{log.index_no} | {log.email}</div>
+                                </>
+                              ) : (
+                                <span className="text-slate-400 dark:text-slate-500 italic">System Event</span>
+                              )}
                             </TableCell>
                             <TableCell className="px-4 py-2.5 text-slate-600 dark:text-slate-400 font-semibold">{log.action_taken}</TableCell>
                           </TableRow>
@@ -1636,20 +2062,26 @@ export default function AdminDashboard() {
                 {/* Allocator Form */}
                 <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-2xl lg:col-span-1 shadow-sm">
                   <CardHeader>
-                    <CardTitle className="text-base font-bold text-slate-950 dark:text-white">Assign Faculty Session</CardTitle>
-                    <CardDescription className="text-[11px] text-slate-500">Maps entire faculty list to graduation session slots.</CardDescription>
+                    <CardTitle className="text-base font-bold text-slate-950 dark:text-white">Assign Seating Group Session</CardTitle>
+                    <CardDescription className="text-[11px] text-slate-500">Maps entire seating group to graduation session slots.</CardDescription>
                   </CardHeader>
                   <CardContent>
                     <form onSubmit={handleAllocateSession} className="space-y-4">
                       <div className="space-y-1.5">
-                        <Label htmlFor="allocFaculty" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Select Faculty</Label>
+                        <Label htmlFor="allocFaculty" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Allocation Group</Label>
                         <select
                           id="allocFaculty"
                           value={allocateFaculty}
                           onChange={(e) => setAllocateFaculty(e.target.value)}
                           className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-300 px-3 py-2 rounded-lg focus:outline-none"
                         >
-                          {FACULTIES.map((f) => <option key={f} value={f}>{f}</option>)}
+                          <option value="Faculty of Technology (Internal)">Faculty of Technology (Internal)</option>
+                          <option value="Faculty of Applied Sciences (Internal)">Faculty of Applied Sciences (Internal)</option>
+                          <option value="Faculty of Management Studies (Internal)">Faculty of Management Studies (Internal)</option>
+                          <option value="Faculty of Social Sciences & Humanities (Internal)">Faculty of Social Sciences & Humanities (Internal)</option>
+                          <option value="Faculty of Agriculture (Internal)">Faculty of Agriculture (Internal)</option>
+                          <option value="Faculty of Medicine and Allied Sciences (Internal)">Faculty of Medicine and Allied Sciences (Internal)</option>
+                          <option value="All External Degrees">All External Degrees</option>
                         </select>
                       </div>
 
@@ -1680,28 +2112,74 @@ export default function AdminDashboard() {
                 <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-2xl lg:col-span-2 shadow-sm">
                   <CardHeader>
                     <CardTitle className="text-base font-bold text-slate-950 dark:text-white">Graduation Session Slots</CardTitle>
-                    <CardDescription className="text-[11px] text-slate-500">Overview of 4 sessions housing up to 2 faculties each.</CardDescription>
+                    <CardDescription className="text-[11px] text-slate-500">Overview of 4 sessions housing up to 2 groups each.</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     {[1, 2, 3, 4].map((sessNum) => {
-                      const facultiesInSession = sessionAllocations.filter(alloc => alloc.session_number === sessNum);
+                      const groupsInSession = (() => {
+                        const map = new Map<string, { groupName: string, studentCount: number }>();
+                        sessionAllocations.forEach(alloc => {
+                          if (alloc.session_number !== sessNum) return;
+                          const isExternal = alloc.degree_type === 'External';
+                          const groupName = isExternal ? 'All External Degrees' : `${alloc.faculty} (Internal)`;
+                          
+                          if (map.has(groupName)) {
+                            const existing = map.get(groupName)!;
+                            existing.studentCount += parseInt(alloc.student_count || '0');
+                          } else {
+                            map.set(groupName, { groupName, studentCount: parseInt(alloc.student_count || '0') });
+                          }
+                        });
+                        return Array.from(map.values());
+                      })();
+
                       return (
                         <div key={sessNum} className="p-4 bg-white dark:bg-slate-950/40 rounded-xl border border-slate-200 dark:border-slate-900 flex flex-col md:flex-row md:items-center justify-between gap-4">
                           <div className="space-y-1">
                             <span className="text-xs font-bold text-slate-900 dark:text-white">Session {sessNum}</span>
-                            <div className="text-[10px] text-slate-500">Maximum capacity: 2 faculties</div>
+                            <div className="text-[10px] text-slate-500">Maximum capacity: 2 groups</div>
                           </div>
 
-                          <div className="flex flex-1 md:justify-end gap-3">
-                            {facultiesInSession.length === 0 ? (
+                          <div className="flex flex-1 md:justify-end gap-3 flex-wrap">
+                            {groupsInSession.length === 0 ? (
                               <span className="text-xs text-slate-400 dark:text-slate-600 font-semibold italic">Unallocated slot</span>
                             ) : (
-                              facultiesInSession.map((alloc) => (
-                                <div key={alloc.faculty} className="px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg flex items-center justify-between gap-4 text-xs">
+                              groupsInSession.map((group) => (
+                                <div key={group.groupName} className="px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg flex items-center justify-between gap-4 text-xs">
                                   <div>
-                                    <span className="font-bold text-blue-600 dark:text-blue-400 block leading-none">{alloc.faculty}</span>
-                                    <span className="text-[9px] text-slate-500 mt-1 block">{alloc.student_count} Candidates</span>
+                                    <span className="font-bold text-blue-600 dark:text-blue-400 block leading-none">{group.groupName}</span>
+                                    <span className="text-[9px] text-slate-500 mt-1 block">{group.studentCount} Candidates</span>
                                   </div>
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      if (!window.confirm(`Are you sure you want to clear session and seating allocation for ${group.groupName}?`)) {
+                                        return;
+                                      }
+                                      setLoading(true);
+                                      try {
+                                        const res = await fetch(`/api/admin/sessions?group=${encodeURIComponent(group.groupName)}`, {
+                                          method: 'DELETE'
+                                        });
+                                        const json = await res.json();
+                                        if (res.ok && json.success) {
+                                          triggerAlert(true, json.message || `Successfully cleared allocation for ${group.groupName}.`);
+                                          loadSessionAllocations();
+                                          loadStudents();
+                                        } else {
+                                          triggerAlert(false, json.error || 'Failed to clear allocation.');
+                                        }
+                                      } catch {
+                                        triggerAlert(false, 'Network error.');
+                                      } finally {
+                                        setLoading(false);
+                                      }
+                                    }}
+                                    className="p-1 hover:bg-red-50 dark:hover:bg-red-950/20 text-red-600 dark:text-red-400 rounded-md transition"
+                                    title={`Clear ${group.groupName} allocation`}
+                                  >
+                                    <X className="h-3.5 w-3.5" />
+                                  </button>
                                 </div>
                               ))
                             )}
@@ -1732,14 +2210,49 @@ export default function AdminDashboard() {
                     </p>
 
                     {printStatus.status === 'idle' ? (
-                      <Button
-                        onClick={handleTriggerPrint}
-                        disabled={loading}
-                        className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold h-11 rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20"
-                      >
-                        {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                        Trigger Compilation Queue
-                      </Button>
+                      <div className="space-y-4">
+                        <div className="space-y-3 text-left bg-slate-50 dark:bg-slate-900/40 p-4 rounded-xl border border-slate-200 dark:border-slate-800">
+                          <div className="space-y-1.5">
+                            <Label htmlFor="printFacultySelect" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Select Faculty</Label>
+                            <select
+                              id="printFacultySelect"
+                              value={printFaculty}
+                              onChange={(e) => setPrintFaculty(e.target.value)}
+                              className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-white px-3 py-2 rounded-lg focus:outline-none h-10 font-bold"
+                            >
+                              <option value="">Select Faculty</option>
+                              {FACULTIES.map((f) => <option key={f} value={f}>{f}</option>)}
+                            </select>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <Label htmlFor="printDegreeSelect" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Select Degree</Label>
+                            <select
+                              id="printDegreeSelect"
+                              value={printDegreeId}
+                              onChange={(e) => setPrintDegreeId(e.target.value)}
+                              disabled={!printFaculty}
+                              className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-white px-3 py-2 rounded-lg focus:outline-none h-10 disabled:opacity-50 font-bold"
+                            >
+                              <option value="">Select Degree</option>
+                              {printFaculty && degrees.filter(d => d.faculty === printFaculty).map((d) => (
+                                <option key={d.id} value={d.id}>
+                                  {d.name_en} ({d.type})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+
+                        <Button
+                          onClick={handleTriggerPrint}
+                          disabled={loading || !printFaculty || !printDegreeId}
+                          className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold h-11 rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20 disabled:opacity-50"
+                        >
+                          {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                          Trigger Compilation Queue
+                        </Button>
+                      </div>
                     ) : printStatus.status === 'processing' ? (
                       <div className="space-y-3">
                         <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
@@ -1792,58 +2305,89 @@ export default function AdminDashboard() {
             </div>
           )}
 
-          {/* 7. STAFF ACCOUNT MANAGEMENT WORKSPACE */}
+          {/* 7. ADMINISTRATOR CONTROL CENTER WORKSPACE */}
           {activeTab === 'accounts' && staffUser?.role === 'Administrator' && (
             <div className="space-y-6">
+              
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Form to Add Account */}
-                <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-2xl lg:col-span-1 shadow-sm">
-                  <CardHeader>
-                    <CardTitle className="text-base font-bold text-slate-950 dark:text-white">Create Administrative Account</CardTitle>
-                    <CardDescription className="text-[11px] text-slate-555">Register new staff members or administrators.</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <form onSubmit={handleCreateStaff} className="space-y-4">
-                      <div className="space-y-1.5">
-                        <Label htmlFor="newStaffName" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Full Name</Label>
-                        <Input id="newStaffName" required value={newStaffName} onChange={(e) => setNewStaffName(e.target.value)} placeholder="e.g. John Doe" className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 text-xs rounded-lg h-9" />
-                      </div>
-                      
-                      <div className="space-y-1.5">
-                        <Label htmlFor="newStaffUsername" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Username</Label>
-                        <Input id="newStaffUsername" required value={newStaffUsername} onChange={(e) => setNewStaffUsername(e.target.value)} placeholder="e.g. johnd" className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 text-xs rounded-lg h-9" />
-                      </div>
+                
+                {/* Column 1: Add Account & Database backup */}
+                <div className="lg:col-span-1 space-y-6">
+                  
+                  {/* Form to Add Account */}
+                  <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-2xl shadow-sm">
+                    <CardHeader>
+                      <CardTitle className="text-base font-bold text-slate-950 dark:text-white">Create Administrative Account</CardTitle>
+                      <CardDescription className="text-[11px] text-slate-500">Register new staff members or administrators.</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <form onSubmit={handleCreateStaff} className="space-y-4">
+                        <div className="space-y-1.5">
+                          <Label htmlFor="newStaffName" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Full Name</Label>
+                          <Input id="newStaffName" required value={newStaffName} onChange={(e) => setNewStaffName(e.target.value)} placeholder="e.g. John Doe" className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 text-xs rounded-lg h-9" />
+                        </div>
+                        
+                        <div className="space-y-1.5">
+                          <Label htmlFor="newStaffUsername" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Username</Label>
+                          <Input id="newStaffUsername" required value={newStaffUsername} onChange={(e) => setNewStaffUsername(e.target.value)} placeholder="e.g. johnd" className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 text-xs rounded-lg h-9" />
+                        </div>
 
-                      <div className="space-y-1.5">
-                        <Label htmlFor="newStaffPassword" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Password</Label>
-                        <Input id="newStaffPassword" required type="password" value={newStaffPassword} onChange={(e) => setNewStaffPassword(e.target.value)} placeholder="••••••••" className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 text-xs rounded-lg h-9" />
-                      </div>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="newStaffPassword" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Password</Label>
+                          <Input id="newStaffPassword" required type="password" value={newStaffPassword} onChange={(e) => setNewStaffPassword(e.target.value)} placeholder="••••••••" className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 text-xs rounded-lg h-9" />
+                        </div>
 
-                      <div className="space-y-1.5">
-                        <Label htmlFor="newStaffRole" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Role</Label>
-                        <select
-                          id="newStaffRole"
-                          value={newStaffRole}
-                          onChange={(e) => setNewStaffRole(e.target.value as any)}
-                          className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-300 px-3 py-2 rounded-lg focus:outline-none h-9"
-                        >
-                          <option value="Staff">Staff</option>
-                          <option value="Administrator">Administrator</option>
-                        </select>
-                      </div>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="newStaffRole" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Role</Label>
+                          <select
+                            id="newStaffRole"
+                            value={newStaffRole}
+                            onChange={(e) => setNewStaffRole(e.target.value as any)}
+                            className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-300 px-3 py-2 rounded-lg focus:outline-none h-9"
+                          >
+                            <option value="Staff">Staff</option>
+                            <option value="Administrator">Administrator</option>
+                          </select>
+                        </div>
 
-                      <Button type="submit" disabled={loading} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold h-9 text-xs rounded-lg mt-2 shadow">
-                        {loading ? <Loader2 className="h-4 w-4 animate-spin mx-auto text-white" /> : 'Create Account'}
-                      </Button>
-                    </form>
-                  </CardContent>
-                </Card>
+                        <Button type="submit" disabled={loading} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold h-9 text-xs rounded-lg mt-2 shadow">
+                          {loading ? <Loader2 className="h-4 w-4 animate-spin mx-auto text-white" /> : 'Create Account'}
+                        </Button>
+                      </form>
+                    </CardContent>
+                  </Card>
 
-                {/* Table displaying staff list */}
-                <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-2xl lg:col-span-2 shadow-sm">
+                  {/* Database Maintenance Card */}
+                  <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-2xl shadow-sm">
+                    <CardHeader>
+                      <CardTitle className="text-base font-bold text-slate-950 dark:text-white flex items-center gap-1.5">
+                        <Download className="h-5 w-5 text-blue-600 dark:text-blue-500" />
+                        Database Maintenance
+                      </CardTitle>
+                      <CardDescription className="text-[11px] text-slate-555">Export a full system state JSON snapshot.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <p className="text-xs text-slate-500 leading-relaxed">
+                        Download a complete backup of the degrees registry, student entries, staff accounts, timeline settings, and the immutable audit trail log history.
+                      </p>
+                      <a
+                        href="/api/admin/backup"
+                        download
+                        className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold h-9 rounded-lg text-xs flex items-center justify-center gap-2 transition shadow shadow-blue-500/20"
+                      >
+                        <Download className="h-4 w-4" />
+                        Export Database Backup
+                      </a>
+                    </CardContent>
+                  </Card>
+
+                </div>
+
+                {/* Column 2 & 3: Table displaying staff list */}
+                <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-2xl lg:col-span-2 shadow-sm self-start">
                   <CardHeader>
                     <CardTitle className="text-base font-bold text-slate-950 dark:text-white">Administrative Staff Registry</CardTitle>
-                    <CardDescription className="text-[11px] text-slate-555">Currently configured system accounts.</CardDescription>
+                    <CardDescription className="text-[11px] text-slate-500">Currently configured system accounts.</CardDescription>
                   </CardHeader>
                   <CardContent className="p-0 overflow-hidden border-t border-slate-100 dark:border-slate-900">
                     <Table className="text-xs">
@@ -1858,7 +2402,7 @@ export default function AdminDashboard() {
                       <TableBody className="divide-y divide-slate-100 dark:divide-slate-900 font-medium">
                         {staffList.length === 0 ? (
                           <TableRow>
-                            <TableCell colSpan={4} className="text-center py-8 text-slate-555">No staff members found.</TableCell>
+                            <TableCell colSpan={4} className="text-center py-8 text-slate-500">No staff members found.</TableCell>
                           </TableRow>
                         ) : (
                           staffList.map((staff) => (
@@ -1872,7 +2416,7 @@ export default function AdminDashboard() {
                                   {staff.role}
                                 </span>
                               </TableCell>
-                              <TableCell className="px-4 py-2.5 text-right text-slate-555 dark:text-slate-500">
+                              <TableCell className="px-4 py-2.5 text-right text-slate-500">
                                 {new Date(staff.created_at).toLocaleDateString()}
                               </TableCell>
                             </TableRow>
@@ -1882,12 +2426,170 @@ export default function AdminDashboard() {
                     </Table>
                   </CardContent>
                 </Card>
+
               </div>
+
+              {/* Filterable activity logs overview */}
+              <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-2xl shadow-sm">
+                <CardHeader>
+                  <CardTitle className="text-base font-bold text-slate-950 dark:text-white">System-wide Activity Audit Logs</CardTitle>
+                  <CardDescription className="text-[11px] text-slate-500">Review logs of all student profiles, status overrides, and administrative actions.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {/* Logs filter inputs */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3 bg-slate-100/30 dark:bg-slate-950/20 p-4 rounded-xl border border-slate-200 dark:border-slate-900">
+                    <div className="space-y-1">
+                      <Label htmlFor="logActor" className="text-[9px] uppercase font-bold text-slate-500">Actor (Admin)</Label>
+                      <Input
+                        id="logActor"
+                        type="text"
+                        value={logSearchActor}
+                        onChange={(e) => setLogSearchActor(e.target.value)}
+                        placeholder="Search Actor..."
+                        className="bg-white dark:bg-slate-950 text-xs h-8 rounded-lg"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="logAction" className="text-[9px] uppercase font-bold text-slate-500">Action Type</Label>
+                      <Input
+                        id="logAction"
+                        type="text"
+                        value={logSearchAction}
+                        onChange={(e) => setLogSearchAction(e.target.value)}
+                        placeholder="e.g. Approved, Rejected..."
+                        className="bg-white dark:bg-slate-950 text-xs h-8 rounded-lg"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="logStudent" className="text-[9px] uppercase font-bold text-slate-500">Student</Label>
+                      <Input
+                        id="logStudent"
+                        type="text"
+                        value={logSearchQuery}
+                        onChange={(e) => setLogSearchQuery(e.target.value)}
+                        placeholder="Search Student..."
+                        className="bg-white dark:bg-slate-950 text-xs h-8 rounded-lg"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="logDateFrom" className="text-[9px] uppercase font-bold text-slate-500">From Date</Label>
+                      <Input
+                        id="logDateFrom"
+                        type="date"
+                        value={logDateFrom}
+                        onChange={(e) => setLogDateFrom(e.target.value)}
+                        className="bg-white dark:bg-slate-950 text-xs h-8 rounded-lg"
+                      />
+                    </div>
+                    <div className="space-y-1 flex flex-col justify-between">
+                      <div>
+                        <Label htmlFor="logDateTo" className="text-[9px] uppercase font-bold text-slate-500">To Date</Label>
+                        <Input
+                          id="logDateTo"
+                          type="date"
+                          value={logDateTo}
+                          onChange={(e) => setLogDateTo(e.target.value)}
+                          className="bg-white dark:bg-slate-950 text-xs h-8 rounded-lg"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Clear logs filter button */}
+                  {(logSearchActor || logSearchQuery || logSearchAction || logDateFrom || logDateTo) && (
+                    <div className="flex justify-end">
+                      <Button
+                        onClick={() => {
+                          setLogSearchActor('');
+                          setLogSearchQuery('');
+                          setLogSearchAction('');
+                          setLogDateFrom('');
+                          setLogDateTo('');
+                        }}
+                        variant="outline"
+                        size="sm"
+                        className="text-[11px] h-7 px-3 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-955 font-semibold"
+                      >
+                        Reset Logs Filters
+                      </Button>
+                    </div>
+                  )}
+
+                  <div className="border border-slate-200 dark:border-slate-900 rounded-xl overflow-hidden overflow-x-auto">
+                    <Table className="text-xs min-w-[800px]">
+                      <TableHeader className="bg-slate-100/50 dark:bg-slate-950/50">
+                        <TableRow className="border-b border-slate-200 dark:border-slate-900">
+                          <TableHead className="text-slate-650 dark:text-slate-400 font-bold px-4 py-3 w-40">Timestamp</TableHead>
+                          <TableHead className="text-slate-650 dark:text-slate-400 font-bold px-4 py-3 w-40">Actor (Admin)</TableHead>
+                          <TableHead className="text-slate-650 dark:text-slate-400 font-bold px-4 py-3">Target Candidate</TableHead>
+                          <TableHead className="text-slate-650 dark:text-slate-400 font-bold px-4 py-3">Action Recorded</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody className="divide-y divide-slate-200 dark:divide-slate-900 font-medium">
+                        {filteredAuditLogs.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={4} className="text-center py-8 text-slate-500">No matching activity logs found.</TableCell>
+                          </TableRow>
+                        ) : (
+                          filteredAuditLogs.map((log) => (
+                            <TableRow key={log.id} className="border-b border-slate-200 dark:border-slate-900 hover:bg-slate-100/30 dark:hover:bg-slate-900/10 transition-colors">
+                              <TableCell className="px-4 py-2.5 text-slate-400 dark:text-slate-500 font-mono">{new Date(log.timestamp).toLocaleString()}</TableCell>
+                              <TableCell className="px-4 py-2.5 font-bold text-slate-900 dark:text-white">{log.admin_id}</TableCell>
+                              <TableCell className="px-4 py-2.5 text-slate-800 dark:text-slate-300">
+                                {log.student_id ? (
+                                  <>
+                                    <div>{log.name_with_initials}</div>
+                                    <div className="text-[10px] text-slate-400 dark:text-slate-500 font-mono mt-0.5">{log.index_no} | {log.email}</div>
+                                  </>
+                                ) : (
+                                  <span className="text-slate-400 dark:text-slate-500 italic">System Event</span>
+                                )}
+                              </TableCell>
+                              <TableCell className="px-4 py-2.5 text-slate-600 dark:text-slate-400 font-semibold">{log.action_taken}</TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </CardContent>
+              </Card>
             </div>
           )}
         </main>
       </div>
-      
+
+      {/* Bulk Degree Ingestion Staging Dialog Modal */}
+      {showDegreeStagingModal && degreeStagingResults.length > 0 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <Card className="border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 w-full max-w-5xl max-h-[90vh] rounded-3xl relative shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <CardHeader className="pb-4 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-base font-bold text-slate-950 dark:text-white uppercase tracking-wider flex items-center gap-2">
+                    <Upload className="h-5 w-5 text-blue-500 animate-pulse" />
+                    Degree Ingestion Staging Preview
+                  </CardTitle>
+                  <CardDescription className="text-[10px] text-slate-500 mt-1">
+                    Review parsed degree row validation before database execution.
+                  </CardDescription>
+                </div>
+                <button
+                  onClick={() => setShowDegreeStagingModal(false)}
+                  className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-850 rounded-lg text-slate-400 dark:text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition"
+                  title="Close Preview"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </CardHeader>
+            <CardContent className="flex-1 overflow-y-auto p-6">
+              {renderDegreeStagingGrid(true)}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
       {/* Bulk Ingestion Staging Dialog Modal */}
       {showStagingModal && stagingResults.length > 0 && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
@@ -1943,15 +2645,9 @@ export default function AdminDashboard() {
                   <span className="text-[10px] uppercase font-bold text-slate-500 block">Faculty</span>
                   <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">{editingDegree.faculty}</span>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <span className="text-[10px] uppercase font-bold text-slate-500 block">Degree No</span>
-                    <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">{editingDegree.degree_no}</span>
-                  </div>
-                  <div className="space-y-1">
-                    <span className="text-[10px] uppercase font-bold text-slate-500 block">Degree Code</span>
-                    <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">{editingDegree.code}</span>
-                  </div>
+                <div className="space-y-1">
+                  <span className="text-[10px] uppercase font-bold text-slate-500 block">Degree No</span>
+                  <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">{editingDegree.degree_no}</span>
                 </div>
                 
                 <div className="space-y-1.5">
@@ -2003,7 +2699,7 @@ export default function AdminDashboard() {
 
       {/* Footer */}
       <footer className="border-t border-slate-200 dark:border-slate-900 py-6 text-center text-xs text-slate-500 dark:text-slate-600 mt-12 transition-colors duration-200">
-        © {new Date().getFullYear()} Exam Division, Rajarata University of Sri Lanka, All Rights Reserved.
+        © {new Date().getFullYear()} Exam Division. Rajarata University of Sri Lanka. All Rights Reserved.
       </footer>
     </div>
   );

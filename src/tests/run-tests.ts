@@ -265,7 +265,7 @@ async function runTests() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         code: 'BSc-CS',
-        faculty: 'Faculty of Applied Science',
+        faculty: 'Faculty of Applied Sciences',
         degree_no: 1,
         name_en: 'BSc in Computer Science',
         name_si: 'පරිගණක විද්‍යා උපාධිය',
@@ -281,7 +281,7 @@ async function runTests() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         code: 'BIT',
-        faculty: 'Faculty of Social Science and Humanities',
+        faculty: 'Faculty of Social Sciences & Humanities',
         degree_no: 1,
         name_en: 'Bachelor of Information Technology',
         name_si: 'තොරතුරු තාක්ෂණ උපාධිය',
@@ -295,8 +295,8 @@ async function runTests() {
     const getDegreesRes = await fetch(`${BASE_URL}/api/degrees`);
     const degreesList = (await getDegreesRes.json()).data;
     
-    const hasCS = degreesList.some((d: any) => d.code === 'BSc-CS' && d.faculty === 'Faculty of Applied Science' && d.degree_no === 1);
-    const hasBIT = degreesList.some((d: any) => d.code === 'BIT' && d.faculty === 'Faculty of Social Science and Humanities' && d.degree_no === 1);
+    const hasCS = degreesList.some((d: any) => d.code === 'BSc-CS' && d.faculty === 'Faculty of Applied Sciences' && d.degree_no === 1);
+    const hasBIT = degreesList.some((d: any) => d.code === 'BIT' && d.faculty === 'Faculty of Social Sciences & Humanities' && d.degree_no === 1);
 
     if (hasCS && hasBIT) {
       console.log('✓ Success: Degrees successfully created and immediate database population verified.');
@@ -319,7 +319,7 @@ async function runTests() {
             registration_no: '2022/CS/101',
             index_no: '22001015',
             nic_no: '200112345678',
-            faculty: 'Faculty of Applied Science',
+            faculty: 'Faculty of Applied Sciences',
             degree_name: 'BSc-CS',
             address: 'Colombo 7',
             contact_no: '0771234567',
@@ -370,7 +370,7 @@ async function runTests() {
         registration_no: `REG/2026/${1000 + i}`,
         index_no: `INDEX-${260000 + i}`,
         nic_no: `NIC-${260000 + i}`,
-        faculty: i <= 250 ? 'Faculty of Applied Science' : 'Faculty of Social Science and Humanities',
+        faculty: i <= 250 ? 'Faculty of Applied Sciences' : 'Faculty of Social Sciences & Humanities',
         degreeId: i <= 250 ? deg1.id : deg2.id, // BSc-CS or BIT
         address: `Student Address Line, Road ${i}`,
         contact_no: `077${String(i).padStart(7, '0')}`,
@@ -402,10 +402,21 @@ async function runTests() {
     // ----------------------------------------------------
     console.log('\n[TEST 5] Running Timeline Boundary Test...');
     
+    // Obtain admin session cookie for Test 5 administrative calls
+    const adminLoginRes = await fetch(`${BASE_URL}/api/admin/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', password: 'admin123' })
+    });
+    const testAdminCookieHeader = adminLoginRes.headers.get('set-cookie') || '';
+
     // Close the timeline window (set open to 2 days ago, close to 1 day ago)
     const closeTimelineRes = await fetch(`${BASE_URL}/api/timeline`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Cookie': testAdminCookieHeader
+      },
       body: JSON.stringify({
         open_date: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
         close_date: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
@@ -413,7 +424,7 @@ async function runTests() {
     });
     
     if (closeTimelineRes.status !== 200) {
-      throw new Error('Could not set timeline for boundary test.');
+      throw new Error(`Could not set timeline for boundary test. Status: ${closeTimelineRes.status}`);
     }
 
     // Attempt student login targeting mock student
@@ -443,7 +454,10 @@ async function runTests() {
     // Restore timeline window to open for remaining tests
     await fetch(`${BASE_URL}/api/timeline`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Cookie': testAdminCookieHeader
+      },
       body: JSON.stringify({
         open_date: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
         close_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
@@ -545,7 +559,8 @@ async function runTests() {
     if (badLoginRes.status === 401) {
       console.log('✓ Success: Staff login correctly rejected incorrect credentials.');
     } else {
-      throw new Error(`Auth Test Failed! Allowed login with invalid credentials. Status: ${badLoginRes.status}`);
+      const badLoginJson = await badLoginRes.json().catch(() => ({}));
+      throw new Error(`Auth Test Failed! Allowed login with invalid credentials. Status: ${badLoginRes.status}. Error: ${JSON.stringify(badLoginJson)}`);
     }
 
     // 8c. Verify login succeeds with correct credentials
@@ -644,25 +659,25 @@ async function runTests() {
     // Approve all students so they are eligible for seating allocation, and set them as attending
     await pool.query("UPDATE students SET verification_status = 'Approved', attending_convocation = TRUE");
 
-    // Assign "Faculty of Applied Science" (250 students) to Session 1
+    // Assign "Faculty of Applied Sciences" (250 students) to Session 1
     const assignFac1 = await fetch(`${BASE_URL}/api/admin/sessions`, {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
         'Cookie': adminCookieHeader
       },
-      body: JSON.stringify({ faculty: 'Faculty of Applied Science', sessionNumber: 1 })
+      body: JSON.stringify({ faculty: 'Faculty of Applied Sciences', sessionNumber: 1 })
     });
     const allocation1 = (await assignFac1.json()).data;
 
-    // Assign "Faculty of Social Science and Humanities" (250 students) to Session 1
+    // Assign "Faculty of Social Sciences & Humanities" (250 students) to Session 1
     const assignFac2 = await fetch(`${BASE_URL}/api/admin/sessions`, {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
         'Cookie': adminCookieHeader
       },
-      body: JSON.stringify({ faculty: 'Faculty of Social Science and Humanities', sessionNumber: 1 })
+      body: JSON.stringify({ faculty: 'Faculty of Social Sciences & Humanities', sessionNumber: 1 })
     });
     const allocation2 = (await assignFac2.json()).data;
 
@@ -689,8 +704,13 @@ async function runTests() {
     const certTriggerRes = await fetch(`${BASE_URL}/api/admin/certificates`, {
       method: 'POST',
       headers: {
+        'Content-Type': 'application/json',
         'Cookie': adminCookieHeader
-      }
+      },
+      body: JSON.stringify({
+        faculty: 'Faculty of Applied Sciences',
+        degreeId: deg1.id
+      })
     });
 
     const triggerDuration = Date.now() - startCertTime;

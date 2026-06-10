@@ -13,7 +13,7 @@ export async function GET() {
       const res = await client.query(`
         SELECT l.*, s.index_no, s.registration_no, s.email, s.name_with_initials
         FROM audit_logs l
-        JOIN students s ON l.student_id = s.id
+        LEFT JOIN students s ON l.student_id = s.id
         ORDER BY l.timestamp DESC
       `);
       return res.rows;

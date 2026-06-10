@@ -6,7 +6,7 @@ import { getAdminSession } from '@/lib/auth';
 export async function GET() {
   try {
     const data = await runAsAdmin(async (client) => {
-      const res = await client.query('SELECT * FROM degrees ORDER BY name_en ASC');
+      const res = await client.query('SELECT * FROM degrees ORDER BY import_order ASC');
       return res.rows;
     });
     return NextResponse.json({ success: true, data });
@@ -35,11 +35,11 @@ export async function POST(req: Request) {
     if (!body.code) {
       const abbreviations: Record<string, string> = {
         'Faculty of Technology': 'FT',
-        'Faculty of Applied Science': 'FAS',
+        'Faculty of Applied Sciences': 'FAS',
         'Faculty of Management Studies': 'FMS',
-        'Faculty of Social Science and Humanities': 'FSSH',
+        'Faculty of Social Sciences & Humanities': 'FSSH',
         'Faculty of Agriculture': 'FA',
-        'Faculty of Medicine and Allied Science': 'FMAS',
+        'Faculty of Medicine and Allied Sciences': 'FMAS',
       };
       const prefix = abbreviations[body.faculty] || body.faculty?.replace(/[^a-zA-Z]/g, '').slice(0, 4).toUpperCase() || 'DEG';
       body.code = `${prefix}-DEG-${body.degree_no}`;
@@ -143,7 +143,31 @@ export async function DELETE(req: Request) {
     }
 
     await runAsAdmin(async (client) => {
+      // 1. Fetch the degree being deleted to know its faculty and degree_no
+      const degreeRes = await client.query('SELECT faculty, degree_no FROM degrees WHERE id = $1', [id]);
+      if (degreeRes.rows.length === 0) {
+        throw new Error('Degree not found.');
+      }
+      const { faculty, degree_no } = degreeRes.rows[0];
+
+      // 2. Delete the degree (will fail with foreign key constraint error if student exists)
       await client.query('DELETE FROM degrees WHERE id = $1', [id]);
+
+      // 3. Shift down the degree number and regenerate the degree code for all subsequent degrees in this faculty
+      await client.query(`
+        UPDATE degrees 
+        SET degree_no = degree_no - 1,
+            code = CASE 
+                     WHEN faculty = 'Faculty of Technology' THEN 'FT-DEG-' || (degree_no - 1)
+                     WHEN faculty = 'Faculty of Applied Sciences' THEN 'FAS-DEG-' || (degree_no - 1)
+                     WHEN faculty = 'Faculty of Management Studies' THEN 'FMS-DEG-' || (degree_no - 1)
+                     WHEN faculty = 'Faculty of Social Sciences & Humanities' THEN 'FSSH-DEG-' || (degree_no - 1)
+                     WHEN faculty = 'Faculty of Agriculture' THEN 'FA-DEG-' || (degree_no - 1)
+                     WHEN faculty = 'Faculty of Medicine and Allied Sciences' THEN 'FMAS-DEG-' || (degree_no - 1)
+                     ELSE 'DEG-DEG-' || (degree_no - 1)
+                   END
+        WHERE faculty = $1 AND degree_no > $2
+      `, [faculty, degree_no]);
     });
 
     return NextResponse.json({ success: true, message: 'Degree deleted successfully.' });

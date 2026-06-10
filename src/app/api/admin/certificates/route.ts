@@ -378,14 +378,14 @@ async function ensureTemplates() {
     page.drawCircle({
       x: 297.638,
       y: lineY,
-      radius: sealRadius,
+      size: sealRadius,
       borderColor: rgb(0.8, 0.1, 0.1),
       borderWidth: 1.5,
     });
     page.drawCircle({
       x: 297.638,
       y: lineY,
-      radius: sealRadius - 3,
+      size: sealRadius - 3,
       borderColor: rgb(0.8, 0.1, 0.1),
       borderWidth: 0.5,
     });
@@ -491,11 +491,18 @@ export async function GET() {
   }
 }
 
-export async function POST() {
+export async function POST(req: Request) {
   try {
     const session = await getAdminSession();
     if (!session) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const body = await req.json().catch(() => ({}));
+    const { faculty, degreeId } = body;
+
+    if (!faculty || !degreeId) {
+      return NextResponse.json({ success: false, error: 'Faculty and Degree selection are required.' }, { status: 400 });
     }
 
     if (global.certTaskStatus?.status === 'processing') {
@@ -505,7 +512,7 @@ export async function POST() {
     // Ensure templates are generated and cached
     await ensureTemplates();
 
-    // Query approved students with assigned seating/certificate numbers
+    // Query approved students with assigned seating/certificate numbers matching selected faculty & degree
     const students = await runAsAdmin(async (client) => {
       const res = await client.query(`
         SELECT s.id, s.full_name, s.index_no, s.certificate_number, d.name_en as degree_name_en, d.name_si as degree_name_si, d.name_ta as degree_name_ta, d.type as degree_type
@@ -513,8 +520,10 @@ export async function POST() {
         JOIN degrees d ON s.degree_id = d.id
         WHERE s.verification_status = 'Approved' 
           AND s.certificate_number IS NOT NULL
+          AND s.faculty = $1
+          AND s.degree_id = $2
         ORDER BY s.index_no ASC
-      `);
+      `, [faculty, degreeId]);
       return res.rows;
     });
 

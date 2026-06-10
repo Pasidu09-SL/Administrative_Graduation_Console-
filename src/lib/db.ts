@@ -84,6 +84,11 @@ export async function runMigrations() {
       await client.query(`
         ALTER TABLE degrees ADD COLUMN IF NOT EXISTS faculty VARCHAR(100);
         ALTER TABLE degrees ADD COLUMN IF NOT EXISTS degree_no INT;
+        ALTER TABLE degrees ADD COLUMN IF NOT EXISTS import_order SERIAL;
+      `);
+
+      await client.query(`
+        ALTER TABLE audit_logs ALTER COLUMN student_id DROP NOT NULL;
       `);
 
       await client.query(`
@@ -109,6 +114,16 @@ export async function runMigrations() {
       await client.query(`
         DROP POLICY IF EXISTS select_degrees_policy ON degrees;
         CREATE POLICY select_degrees_policy ON degrees FOR SELECT USING (true);
+      `);
+
+      await client.query(`
+        UPDATE degrees SET faculty = 'Faculty of Applied Sciences' WHERE faculty = 'Faculty of Applied Science';
+        UPDATE degrees SET faculty = 'Faculty of Social Sciences & Humanities' WHERE faculty = 'Faculty of Social Science and Humanities';
+        UPDATE degrees SET faculty = 'Faculty of Medicine and Allied Sciences' WHERE faculty = 'Faculty of Medicine and Allied Science';
+
+        UPDATE students SET faculty = 'Faculty of Applied Sciences' WHERE faculty = 'Faculty of Applied Science';
+        UPDATE students SET faculty = 'Faculty of Social Sciences & Humanities' WHERE faculty = 'Faculty of Social Science and Humanities';
+        UPDATE students SET faculty = 'Faculty of Medicine and Allied Sciences' WHERE faculty = 'Faculty of Medicine and Allied Science';
       `);
     }
   } catch (err) {
