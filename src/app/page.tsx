@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ThemeToggle } from '@/components/ThemeToggle';
-import { GraduationCap, ShieldCheck, Mail, KeyRound, Loader2 } from 'lucide-react';
+import { GraduationCap, ShieldCheck, Mail, KeyRound, Loader2, X, AlertCircle, CheckCircle2 } from 'lucide-react';
 
 export default function EntryPage() {
   const router = useRouter();
@@ -47,6 +47,20 @@ export default function EntryPage() {
       setError(errorParam);
     }
   }, []);
+
+  useEffect(() => {
+    if (error) {
+      const timer = setTimeout(() => setError(null), 6000);
+      return () => clearTimeout(timer);
+    }
+  }, [error]);
+
+  useEffect(() => {
+    if (info) {
+      const timer = setTimeout(() => setInfo(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [info]);
 
   if (hasToken === null) {
     return (
@@ -100,7 +114,47 @@ export default function EntryPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-50 flex flex-col relative overflow-hidden transition-colors duration-200">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-50 flex flex-col relative overflow-hidden transition-colors duration-200 font-sans">
+      {/* Floating Toast Container */}
+      <div className="fixed top-6 right-6 z-[100] flex flex-col gap-3 w-full max-w-sm pointer-events-none">
+        {info && (
+          <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border border-blue-500/20 dark:border-blue-500/35 shadow-2xl rounded-2xl p-4 flex items-start gap-3 w-full max-w-sm pointer-events-auto animate-in slide-in-from-top-4 duration-300">
+            <div className="p-1.5 bg-blue-500/10 text-blue-600 dark:text-blue-400 rounded-lg border border-blue-500/20">
+              <CheckCircle2 className="h-4 w-4" />
+            </div>
+            <div className="flex-1 space-y-0.5">
+              <h4 className="text-xs font-black tracking-wide text-slate-855 dark:text-white uppercase">Info</h4>
+              <p className="text-xs font-semibold text-slate-655 dark:text-slate-400 leading-snug">{info}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setInfo(null)}
+              className="text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 transition-colors p-0.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+
+        {error && (
+          <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border border-red-500/20 dark:border-red-500/35 shadow-2xl rounded-2xl p-4 flex items-start gap-3 w-full max-w-sm pointer-events-auto animate-in slide-in-from-top-4 duration-300">
+            <div className="p-1.5 bg-red-500/10 text-red-655 dark:text-red-400 rounded-lg border border-red-500/20">
+              <AlertCircle className="h-4 w-4" />
+            </div>
+            <div className="flex-1 space-y-0.5">
+              <h4 className="text-xs font-black tracking-wide text-slate-855 dark:text-white uppercase">Error</h4>
+              <p className="text-xs font-semibold text-slate-655 dark:text-red-450 leading-snug whitespace-pre-wrap">{error}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setError(null)}
+              className="text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 transition-colors p-0.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+      </div>
       {/* Background Gradient Glows */}
       <div className="absolute top-[-10%] right-[-10%] w-[500px] h-[500px] rounded-full bg-blue-600/5 dark:bg-blue-600/10 blur-[120px] pointer-events-none" />
       <div className="absolute bottom-[-10%] left-[-10%] w-[500px] h-[500px] rounded-full bg-blue-500/5 dark:bg-blue-500/10 blur-[120px] pointer-events-none" />
@@ -153,16 +207,6 @@ export default function EntryPage() {
             </CardHeader>
 
             <CardContent>
-              {error && (
-                <div className="mb-4 p-3 bg-red-50 dark:bg-red-950/45 border border-red-200 dark:border-red-500/35 text-red-700 dark:text-red-300 rounded-xl text-xs font-semibold">
-                  {error}
-                </div>
-              )}
-              {info && (
-                <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-950/45 border border-blue-200 dark:border-blue-500/35 text-blue-700 dark:text-blue-300 rounded-xl text-xs font-semibold">
-                  {info}
-                </div>
-              )}
 
                 <form onSubmit={handleLogin} className="space-y-4">
                   <div className="space-y-2">

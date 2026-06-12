@@ -29,7 +29,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: 'Unauthorized. Administrator role required.' }, { status: 401 });
     }
 
-    const { templateKey, subject, body } = await req.json();
+    const payload = await req.json();
+    const templateKey = payload.templateKey || payload.template_key;
+    const { subject, body } = payload;
 
     if (!templateKey || !subject || !body || typeof subject !== 'string' || typeof body !== 'string') {
       return NextResponse.json({ success: false, error: 'Missing or invalid parameters.' }, { status: 400 });

@@ -886,6 +886,300 @@ async function runTests() {
       throw new Error(`Revoke request failed. Status: ${revokeRes.status}`);
     }
 
+    console.log('\n[TEST 16] Running Student Registry Record Deletion Test...');
+    
+    const deleteRes = await fetch(`${BASE_URL}/api/admin/review`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cookie': adminCookieHeader
+      },
+      body: JSON.stringify({
+        studentId: revokeStudentId
+      })
+    });
+
+    if (deleteRes.status === 200) {
+      const deleteCheck = (await pool.query("SELECT * FROM students WHERE id = $1", [revokeStudentId])).rows[0];
+      if (!deleteCheck) {
+        console.log('✓ Success: Student registry record successfully deleted and purged from database.');
+      } else {
+        throw new Error('Student record still exists in the database after DELETE API request.');
+      }
+    } else {
+      throw new Error(`Delete request failed. Status: ${deleteRes.status}`);
+    }
+
+    // ----------------------------------------------------
+    // Test 17: Student Timeline Bypass Test
+    // ----------------------------------------------------
+    console.log('\n[TEST 17] Running Student Timeline Bypass Test...');
+
+    // Ensure portal is closed manually first
+    await pool.query("UPDATE registration_windows SET is_manually_closed = true WHERE is_active = true");
+
+    const bypassEmail = 'bypass@uni.ac.lk';
+    const bypassIndex = 'INDEX-777777';
+
+    // Insert a student with timeline_bypass = false
+    await pool.query(
+      `INSERT INTO students (index_no, registration_no, nic_no, full_name, name_with_initials, gpa, class, degree_id, faculty, email, address, contact_no, convocation_year, attendance_confirmed, timeline_bypass)
+       VALUES ($1, 'REG-777777', '777777777V', 'Bypass Student', 'Student B.', '3.5', 'First Class', $2, 'Faculty of Applied Sciences', $3, 'Uni Address', '0777777777', '2026', false, false)`,
+      [bypassIndex, deg1.id, bypassEmail]
+    );
+
+    const bypassMagicToken = signMagicToken(bypassEmail, bypassIndex);
+
+    // Login should be rejected
+    const blockLoginRes = await fetch(`${BASE_URL}/api/student/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: bypassEmail,
+        index_no: bypassIndex,
+        nic_no: '777777777V',
+        token: bypassMagicToken
+      })
+    });
+
+    if (blockLoginRes.status !== 403) {
+      throw new Error(`Login was not blocked when portal is closed. Status: ${blockLoginRes.status}`);
+    }
+
+    // Grant bypass
+    await pool.query("UPDATE students SET timeline_bypass = true WHERE email = $1", [bypassEmail]);
+
+    // Login should succeed now!
+    const allowLoginRes = await fetch(`${BASE_URL}/api/student/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: bypassEmail,
+        index_no: bypassIndex,
+        nic_no: '777777777V',
+        token: bypassMagicToken
+      })
+    });
+
+    if (allowLoginRes.status !== 200) {
+      throw new Error(`Login was blocked even with timeline_bypass granted. Status: ${allowLoginRes.status}`);
+    }
+
+    const studentCookieHeader = allowLoginRes.headers.get('set-cookie');
+    if (!studentCookieHeader) {
+      throw new Error('Failed to retrieve student session cookie header');
+    }
+
+    // Update profile should succeed
+    const updateProfileRes = await fetch(`${BASE_URL}/api/student/profile`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cookie': studentCookieHeader
+      },
+      body: JSON.stringify({
+        attending_convocation: true
+      })
+    });
+
+    if (updateProfileRes.status === 200) {
+      console.log('✓ Success: Student successfully bypassed closed portal window using manual bypass permission.');
+    } else {
+      throw new Error(`Bypass profile update failed. Status: ${updateProfileRes.status}, Body: ${await updateProfileRes.text()}`);
+    }
+
+    // Reset manual closed state back for clean exit
+    await pool.query("UPDATE registration_windows SET is_manually_closed = false WHERE is_active = true");
+
+    // ----------------------------------------------------
+    // Test 18: Active Year Timeline Isolation and Magic Link Extension
+    // ----------------------------------------------------
+    console.log('\n[TEST 18] Running Cohort Timeline Isolation and Magic Link Extension Test...');
+
+    // 18a. Isolation: Set 2026 as active, set is_manually_closed = true
+    await fetch(`${BASE_URL}/api/admin/active-session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Cookie': adminCookieHeader },
+      body: JSON.stringify({ convocation_year: '2026' })
+    });
+    
+    await fetch(`${BASE_URL}/api/timeline`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Cookie': adminCookieHeader },
+      body: JSON.stringify({ toggle_only: true, is_manually_closed: true })
+    });
+
+    // Verify 2026 has is_manually_closed = true
+    const check2026Res = await pool.query("SELECT is_manually_closed, open_date FROM registration_windows WHERE convocation_year = '2026'");
+    if (check2026Res.rows[0].is_manually_closed !== true) {
+      throw new Error('Failed to set 2026 manually closed override');
+    }
+
+    // 18b. Isolation: Activate a new convocation year 2027
+    const act2027Res = await fetch(`${BASE_URL}/api/admin/active-session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Cookie': adminCookieHeader },
+      body: JSON.stringify({ convocation_year: '2027' })
+    });
+    
+    if (act2027Res.status !== 200) {
+      throw new Error(`Failed to activate year 2027. Status: ${act2027Res.status}`);
+    }
+
+    // Verify 2027 has epoch dates (closed) and is_active = true
+    const check2027Res = await pool.query("SELECT * FROM registration_windows WHERE convocation_year = '2027'");
+    if (check2027Res.rows.length === 0) {
+      throw new Error('Year 2027 registration window was not created');
+    }
+    const win2027 = check2027Res.rows[0];
+    const epochDate = new Date(0).toISOString();
+    const openDate2027 = new Date(win2027.open_date).toISOString();
+    if (openDate2027 !== epochDate) {
+      throw new Error(`Expected 2027 open_date to be epoch 1970-01-01, got: ${openDate2027}`);
+    }
+    if (win2027.is_active !== true) {
+      throw new Error('Year 2027 is not marked active');
+    }
+
+    // 18c. Isolation: Switch back to 2026
+    await fetch(`${BASE_URL}/api/admin/active-session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Cookie': adminCookieHeader },
+      body: JSON.stringify({ convocation_year: '2026' })
+    });
+
+    // Verify 2026 still has is_manually_closed = true
+    const check2026Again = await pool.query("SELECT is_manually_closed FROM registration_windows WHERE convocation_year = '2026'");
+    if (check2026Again.rows[0].is_manually_closed !== true) {
+      throw new Error('2026 is_manually_closed status was reset when switching back!');
+    }
+    console.log('✓ Success: Switch back to existing year successfully restored its manually closed override state.');
+
+    // 18d. Magic Link Extension: Generate magic link while 2026 is closed
+    const linkEmail = 'student1@uni.ac.lk';
+    const linkIndex = 'INDEX-260001';
+    const linkMagicToken = signMagicToken(linkEmail, linkIndex);
+
+    // Try to access magic login route: should fail/redirect back with error if portal is closed
+    const testMagicClosedRes = await fetch(`${BASE_URL}/api/student/auth/magic-login?email=${encodeURIComponent(linkEmail)}&token=${linkMagicToken}`, {
+      redirect: 'manual'
+    });
+    const testMagicClosedLoc = testMagicClosedRes.headers.get('location') || '';
+    if (!testMagicClosedLoc.includes('error=Portal%20Closed')) {
+      throw new Error(`Expected magic login to be blocked/redirected with error when portal is closed. Location: ${testMagicClosedLoc}`);
+    }
+
+    // 18e. Magic Link Extension: Extend/open the timeline for 2026 again
+    await fetch(`${BASE_URL}/api/timeline`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Cookie': adminCookieHeader },
+      body: JSON.stringify({ toggle_only: true, is_manually_closed: false })
+    });
+
+    // Try login again with the SAME magic link token: should now succeed (redirect with token to entry)
+    const testMagicOpenRes = await fetch(`${BASE_URL}/api/student/auth/magic-login?email=${encodeURIComponent(linkEmail)}&token=${linkMagicToken}`, {
+      redirect: 'manual'
+    });
+    const testMagicOpenLoc = testMagicOpenRes.headers.get('location') || '';
+    if (!testMagicOpenLoc.includes('token=') || testMagicOpenLoc.includes('error=')) {
+      throw new Error(`Expected magic login to succeed after opening timeline. Location: ${testMagicOpenLoc}`);
+    }
+    console.log('✓ Success: Existing magic links continue to work dynamically when timeline is extended.');
+
+    // ----------------------------------------------------
+    // Test 19: Student Deletion and Clean Re-import Test
+    // ----------------------------------------------------
+    console.log('\n[TEST 19] Running Student Deletion and Clean Re-import Test...');
+
+    const test19Email = 'student999019@uni.ac.lk';
+    const test19Index = 'INDEX-999019';
+    
+    // Insert student 19 with confirmed attendance
+    const insertRes19 = await pool.query(
+      `INSERT INTO students (index_no, registration_no, nic_no, full_name, name_with_initials, gpa, class, degree_id, faculty, email, address, contact_no, convocation_year, attendance_confirmed)
+       VALUES ($1, 'REG-999019', 'NIC-999019', 'Student Nineteen', 'Student N.', 3.2, 'Second Upper', $2, 'Faculty of Applied Sciences', $3, 'Uni Address', '0777777777', '2026', true)
+       RETURNING id`,
+      [test19Index, deg1.id, test19Email]
+    );
+    const student19Id = insertRes19.rows[0].id;
+
+    // Create an OTP for student 19
+    await pool.query(
+      "INSERT INTO otp_codes (email, code, expires_at) VALUES ($1, '123456', CURRENT_TIMESTAMP + INTERVAL '5 minutes')",
+      [test19Email]
+    );
+
+    // Verify OTP exists
+    const otpBefore = await pool.query("SELECT * FROM otp_codes WHERE email = $1", [test19Email]);
+    if (otpBefore.rows.length !== 1) {
+      throw new Error('OTP was not created correctly for Test 19');
+    }
+
+    // Delete student 19 via API
+    const deleteStudent19Res = await fetch(`${BASE_URL}/api/admin/review`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cookie': adminCookieHeader
+      },
+      body: JSON.stringify({
+        studentId: student19Id
+      })
+    });
+
+    if (deleteStudent19Res.status !== 200) {
+      throw new Error(`Failed to delete student 19. Status: ${deleteStudent19Res.status}`);
+    }
+
+    // Verify student 19 is deleted
+    const student19Check = await pool.query("SELECT * FROM students WHERE id = $1", [student19Id]);
+    if (student19Check.rows.length !== 0) {
+      throw new Error('Student 19 still exists in database after deletion');
+    }
+
+    // Verify OTP is deleted
+    const otpAfter = await pool.query("SELECT * FROM otp_codes WHERE email = $1", [test19Email]);
+    if (otpAfter.rows.length !== 0) {
+      throw new Error('OTP code for student 19 was not deleted when student was deleted');
+    }
+
+    // Re-import student 19 via ingestion commit
+    const reIngestRes = await fetch(`${BASE_URL}/api/ingestion/commit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        rows: [{
+          name_with_initials: 'Student N.',
+          full_name: 'Student Nineteen',
+          registration_no: 'REG-999019',
+          index_no: test19Index,
+          nic_no: 'NIC-999019',
+          faculty: 'Faculty of Applied Sciences',
+          degreeId: deg1.id,
+          address: 'Uni Address',
+          contact_no: '0777777777',
+          email: test19Email,
+          gpa: '3.20',
+          class: 'Second Upper'
+        }]
+      })
+    });
+
+    if (reIngestRes.status !== 200) {
+      throw new Error(`Re-ingestion failed with status: ${reIngestRes.status}`);
+    }
+
+    // Fetch the re-imported student and verify they are treated as a fresh/new student (attendance_confirmed = false)
+    const reImportCheck = await pool.query("SELECT * FROM students WHERE email = $1 AND convocation_year = '2026'", [test19Email]);
+    if (reImportCheck.rows.length !== 1) {
+      throw new Error('Re-imported student was not found in database');
+    }
+    const freshStudent = reImportCheck.rows[0];
+    if (freshStudent.attendance_confirmed !== false) {
+      throw new Error(`Expected re-imported student's attendance_confirmed to be false, got: ${freshStudent.attendance_confirmed}`);
+    }
+    console.log('✓ Success: Student successfully deleted with all related info, and re-import treated them as a new student.');
+
     console.log('\n=== ALL TESTS PASSED SUCCESSFULLY! ===');
   } catch (err: any) {
     console.error('\n❌ A test failed during the run:', err.message);

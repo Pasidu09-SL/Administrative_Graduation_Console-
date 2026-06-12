@@ -59,10 +59,24 @@ export async function PATCH(req: Request) {
     const mockTime = req.headers.get('x-mock-time');
     const { isOpen } = await isRegistrationWindowOpen(mockTime);
     if (!isOpen) {
-      return NextResponse.json({
-        success: false,
-        error: 'Portal Closed: Registration access is currently inactive outside the configured timeline.'
-      }, { status: 403 });
+      const hasBypass = await runAsStudent(payload.email, async (client) => {
+        const activeYearRes = await client.query(
+          "SELECT convocation_year FROM registration_windows WHERE is_active = TRUE LIMIT 1"
+        );
+        const activeYear = activeYearRes.rows[0]?.convocation_year || '2026';
+        const res = await client.query(
+          'SELECT timeline_bypass FROM students WHERE LOWER(email) = LOWER($1) AND convocation_year = $2',
+          [payload.email, activeYear]
+        );
+        return res.rows[0]?.timeline_bypass === true;
+      });
+
+      if (!hasBypass) {
+        return NextResponse.json({
+          success: false,
+          error: 'Portal Closed: Registration access is currently inactive outside the configured timeline.'
+        }, { status: 403 });
+      }
     }
 
     const body = await req.json();

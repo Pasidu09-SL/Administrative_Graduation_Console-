@@ -33,6 +33,7 @@ import {
   ArrowRight,
   UserCheck,
   Trash2,
+  Search,
   Download,
   RefreshCw,
   AlertCircle,
@@ -43,6 +44,65 @@ import {
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { useRouter } from "next/navigation";
+
+const wrapPlaceholdersInHtml = (htmlStr: string) => {
+  if (typeof window === "undefined" || !htmlStr) return htmlStr;
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(htmlStr, "text/html");
+  
+  const walk = (node: Node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = node.nodeValue || "";
+      if (text.includes("{{") && text.includes("}}")) {
+        const parent = node.parentNode;
+        if (parent && parent.nodeName !== "SCRIPT" && parent.nodeName !== "STYLE") {
+          const tempDiv = document.createElement("div");
+          tempDiv.innerHTML = text.replace(/\{\{([a-zA-Z0-9_]+)\}\}/g, (match, name) => {
+            return `<span class="variable-badge" contenteditable="false" style="background: rgba(37, 99, 235, 0.1); color: #2563eb; border: 1px solid rgba(37, 99, 235, 0.2); padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 12px; font-weight: bold; pointer-events: none; user-select: none; display: inline-block;">{{${name}}}</span>`;
+          });
+          
+          while (tempDiv.firstChild) {
+            parent.insertBefore(tempDiv.firstChild, node);
+          }
+          parent.removeChild(node);
+        }
+      }
+    } else {
+      const children = Array.from(node.childNodes);
+      for (const child of children) {
+        walk(child);
+      }
+    }
+  };
+  
+  walk(doc.body);
+  
+  let html = "";
+  if (doc.doctype) {
+    html += new XMLSerializer().serializeToString(doc.doctype) + "\n";
+  }
+  html += doc.documentElement.outerHTML;
+  return html;
+};
+
+const unwrapPlaceholdersInHtml = (htmlStr: string) => {
+  if (typeof window === "undefined" || !htmlStr) return htmlStr;
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(htmlStr, "text/html");
+  
+  const badges = doc.querySelectorAll("span.variable-badge");
+  badges.forEach((badge) => {
+    const textNode = doc.createTextNode(badge.textContent || "");
+    badge.parentNode?.replaceChild(textNode, badge);
+  });
+  
+  let html = "";
+  if (doc.doctype) {
+    html += new XMLSerializer().serializeToString(doc.doctype) + "\n";
+  }
+  html += doc.documentElement.outerHTML;
+  return html;
+};
 
 export default function AdminDashboard() {
   const router = useRouter();
@@ -220,6 +280,28 @@ export default function AdminDashboard() {
   });
   const [printFaculty, setPrintFaculty] = useState("");
   const [printDegreeId, setPrintDegreeId] = useState("");
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (successMsg) {
+      const timer = setTimeout(() => setSuccessMsg(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [successMsg]);
+
+  useEffect(() => {
+    if (errorMsg) {
+      const timer = setTimeout(() => setErrorMsg(null), 6000);
+      return () => clearTimeout(timer);
+    }
+  }, [errorMsg]);
+
+  useEffect(() => {
+    if (loginError) {
+      const timer = setTimeout(() => setLoginError(null), 6000);
+      return () => clearTimeout(timer);
+    }
+  }, [loginError]);
 
   useEffect(() => {
     setPrintDegreeId("");
@@ -274,6 +356,13 @@ export default function AdminDashboard() {
   const [dispatchDegreeFilter, setDispatchDegreeFilter] = useState("");
 
   const [showAddDegreeModal, setShowAddDegreeModal] = useState(false);
+
+  // 8. BULK DATA INGESTION DELETION STATES
+  const [ingestStudents, setIngestStudents] = useState<any[]>([]);
+  const [ingestSearchIndex, setIngestSearchIndex] = useState("");
+  const [ingestFacultyFilter, setIngestFacultyFilter] = useState("");
+  const [ingestDegreeFilter, setIngestDegreeFilter] = useState("");
+  const [selectedIngestStudents, setSelectedIngestStudents] = useState<string[]>([]);
 
   // Updated official Faculty Names according to user request
   const FACULTIES =
@@ -332,11 +421,35 @@ export default function AdminDashboard() {
     const json = await res.json();
     if (res.ok && json.data) {
       setTimelineConfig(json.data);
-      setOpenDate(new Date(json.data.open_date).toISOString().slice(0, 16));
-      setCloseDate(new Date(json.data.close_date).toISOString().slice(0, 16));
       setIsManuallyClosed(json.data.is_manually_closed || false);
       if (json.data.convocation_year) {
         setActiveConvocationYear(json.data.convocation_year);
+      }
+
+      const formatLocal = (d: Date) => {
+        const offset = d.getTimezoneOffset();
+        const local = new Date(d.getTime() - (offset * 60 * 1000));
+        return local.toISOString().slice(0, 16);
+      };
+
+      const now = new Date();
+      const openTime = new Date(json.data.open_date);
+      const closeTime = new Date(json.data.close_date);
+
+      const isEpoch = openTime.getFullYear() <= 1970;
+      const isCurrentlyClosed = now < openTime || now > closeTime || json.data.is_manually_closed;
+
+      if (isEpoch || isCurrentlyClosed) {
+        setOpenDate(formatLocal(now));
+      } else {
+        setOpenDate(formatLocal(openTime));
+      }
+
+      if (closeTime.getFullYear() <= 1970) {
+        const defaultClose = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+        setCloseDate(formatLocal(defaultClose));
+      } else {
+        setCloseDate(formatLocal(closeTime));
       }
     }
   };
@@ -354,12 +467,115 @@ export default function AdminDashboard() {
     const res = await fetch(`/api/admin/review?${query.toString()}`);
     const json = await res.json();
     if (res.ok) {
-      setStudents(json.data);
-      if (json.data.length > 0 && !selectedStudent) {
-        setSelectedStudent(json.data[0]);
+      const emailSentStudents = json.data.filter((st: any) => st.email_sent === true);
+      setStudents(emailSentStudents);
+      if (emailSentStudents.length > 0 && (!selectedStudent || !emailSentStudents.some((s: any) => s.id === selectedStudent.id))) {
+        setSelectedStudent(emailSentStudents[0]);
+      } else if (emailSentStudents.length === 0) {
+        setSelectedStudent(null);
       }
     }
   };
+
+  const loadIngestStudents = async () => {
+    try {
+      const res = await fetch(
+        `/api/admin/review?convocationYear=${activeConvocationYear}`,
+      );
+      const json = await res.json();
+      if (res.ok && json.success) {
+        setIngestStudents(json.data);
+      }
+    } catch (err) {
+      console.error("Failed to load ingest students:", err);
+    }
+  };
+
+  const handleDeleteStudent = async (studentId: string) => {
+    if (
+      !confirm(
+        "Are you sure you want to delete this student from the system? This action is permanent and will delete all their records.",
+      )
+    ) {
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch("/api/admin/review", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ studentId }),
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        triggerAlert(true, "Student deleted successfully.");
+        loadIngestStudents();
+        loadStudents();
+      } else {
+        triggerAlert(false, json.error || "Failed to delete student.");
+      }
+    } catch (err) {
+      triggerAlert(false, "Network error.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleBulkDeleteStudents = async () => {
+    if (selectedIngestStudents.length === 0) return;
+    if (
+      !confirm(
+        `Are you sure you want to delete the ${selectedIngestStudents.length} selected students? This action is permanent and will delete all their records.`,
+      )
+    ) {
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch("/api/admin/review", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ studentIds: selectedIngestStudents }),
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        triggerAlert(
+          true,
+          `${selectedIngestStudents.length} students deleted successfully.`,
+        );
+        setSelectedIngestStudents([]);
+        loadIngestStudents();
+        loadStudents();
+      } else {
+        triggerAlert(false, json.error || "Failed to delete students.");
+      }
+    } catch (err) {
+      triggerAlert(false, "Network error.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const filteredIngestStudents = React.useMemo(() => {
+    return ingestStudents.filter((s) => {
+      if (ingestFacultyFilter && s.faculty !== ingestFacultyFilter) return false;
+      if (ingestDegreeFilter && s.degree_id !== ingestDegreeFilter) return false;
+      if (ingestSearchIndex) {
+        const query = ingestSearchIndex.toLowerCase().trim();
+        return (
+          (s.index_no || "").toLowerCase().includes(query) ||
+          (s.full_name || "").toLowerCase().includes(query) ||
+          (s.name_with_initials || "").toLowerCase().includes(query)
+        );
+      }
+      return true;
+    });
+  }, [
+    ingestStudents,
+    ingestFacultyFilter,
+    ingestDegreeFilter,
+    ingestSearchIndex,
+  ]);
 
   const loadAuditLogs = async () => {
     const res = await fetch("/api/admin/logs");
@@ -433,7 +649,7 @@ export default function AdminDashboard() {
         if (current) {
           setTemplateSubject(current.subject);
           setTemplateBody(current.body);
-          setInitialTemplateBody(current.body);
+          setInitialTemplateBody(wrapPlaceholdersInHtml(current.body));
         }
       }
     } catch (err) {
@@ -526,6 +742,12 @@ export default function AdminDashboard() {
   ]);
 
   useEffect(() => {
+    if (staffUser && activeTab === "ingest") {
+      loadIngestStudents();
+    }
+  }, [activeTab, activeConvocationYear, staffUser]);
+
+  useEffect(() => {
     if (staffUser && activeTab === "dispatch") {
       loadDispatcherStudents();
     }
@@ -564,7 +786,8 @@ export default function AdminDashboard() {
         s.verification_status === "Approved" &&
         s.session_number !== null &&
         s.seat_number !== null &&
-        s.certificate_number !== null
+        s.certificate_number !== null &&
+        s.email_sent === true
     );
 
     if (!registrySearch.trim()) return validStudents;
@@ -1412,13 +1635,14 @@ export default function AdminDashboard() {
     e.preventDefault();
     setLoading(true);
     try {
+      const cleanBody = unwrapPlaceholdersInHtml(templateBody);
       const res = await fetch("/api/admin/email-templates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          template_key: selectedTemplateKey,
+          templateKey: selectedTemplateKey,
           subject: templateSubject,
-          body: templateBody,
+          body: cleanBody,
         }),
       });
       const json = await res.json();
@@ -1696,6 +1920,7 @@ export default function AdminDashboard() {
         setIsValidBatch(false);
         if (fileInputRef.current) fileInputRef.current.value = "";
         loadStudents();
+        loadIngestStudents();
       } else {
         triggerAlert(false, json.error || "Failed to commit staging records.");
       }
@@ -2095,6 +2320,28 @@ export default function AdminDashboard() {
   if (!staffUser) {
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-50 flex flex-col relative overflow-hidden transition-colors duration-200 font-sans">
+        {/* Floating Toast Container for Login */}
+        <div className="fixed top-6 right-6 z-[100] flex flex-col gap-3 w-full max-w-sm pointer-events-none">
+          {loginError && (
+            <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border border-red-500/20 dark:border-red-500/35 shadow-2xl rounded-2xl p-4 flex items-start gap-3 w-full max-w-sm pointer-events-auto animate-in slide-in-from-top-4 duration-300">
+              <div className="p-1.5 bg-red-500/10 text-red-655 dark:text-red-400 rounded-lg border border-red-500/20">
+                <AlertCircle className="h-4 w-4" />
+              </div>
+              <div className="flex-1 space-y-0.5">
+                <h4 className="text-xs font-black tracking-wide text-slate-855 dark:text-white uppercase">Error</h4>
+                <p className="text-xs font-semibold text-slate-655 dark:text-red-450 leading-snug">{loginError}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setLoginError(null)}
+                className="text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 transition-colors p-0.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+        </div>
+
         {/* Background Gradient Glows */}
         <div className="absolute top-[-10%] right-[-10%] w-[500px] h-[500px] rounded-full bg-blue-600/5 dark:bg-blue-600/10 blur-[120px] pointer-events-none" />
         <div className="absolute bottom-[-10%] left-[-10%] w-[500px] h-[500px] rounded-full bg-blue-500/5 dark:bg-blue-500/10 blur-[120px] pointer-events-none" />
@@ -2107,7 +2354,7 @@ export default function AdminDashboard() {
             </div>
             <div>
               <span className="text-base font-extrabold tracking-tight text-slate-900 dark:text-white block">
-                Graduation Registration Portal
+                Graduation Portal
               </span>
               <span className="text-[10px] font-bold tracking-wider text-slate-500 dark:text-slate-400 block uppercase mt-0.5">
                 Rajarata University of Sri Lanka
@@ -2161,12 +2408,6 @@ export default function AdminDashboard() {
               </CardHeader>
 
               <CardContent>
-                {loginError && (
-                  <div className="mb-4 p-3 bg-red-50 dark:bg-red-950/45 border border-red-200 dark:border-red-500/35 text-red-700 dark:text-red-300 rounded-xl text-xs font-semibold">
-                    {loginError}
-                  </div>
-                )}
-
                 <form onSubmit={handleLogin} className="space-y-4">
                   <div className="space-y-2">
                     <Label
@@ -2232,6 +2473,65 @@ export default function AdminDashboard() {
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-50 flex flex-col font-sans transition-colors duration-200">
+      {/* Floating Document Live Preview Overlay */}
+      {previewUrl && (
+        <div 
+          className="fixed top-24 right-24 z-[100] w-[400px] h-[400px] bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl p-4 flex flex-col gap-3 animate-in fade-in zoom-in-95 duration-200 pointer-events-none"
+        >
+          <div className="text-[10px] uppercase font-black tracking-wider text-slate-400 dark:text-slate-500 px-1">
+            Document Live Preview
+          </div>
+          <div className="flex-1 w-full h-full rounded-2xl overflow-hidden bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-900/50 flex items-center justify-center">
+            {previewUrl.toLowerCase().endsWith('.pdf') ? (
+              <iframe src={`${previewUrl}#toolbar=0&navpanes=0`} className="w-full h-full border-0" />
+            ) : (
+              <img src={previewUrl} alt="Preview" className="w-full h-full object-contain" />
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Floating Toast Container */}
+      <div className="fixed top-6 right-6 z-[100] flex flex-col gap-3 w-full max-w-sm pointer-events-none">
+        {successMsg && (
+          <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border border-emerald-500/20 dark:border-emerald-500/35 shadow-2xl rounded-2xl p-4 flex items-start gap-3 w-full max-w-sm pointer-events-auto animate-in slide-in-from-top-4 duration-300">
+            <div className="p-1.5 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-lg border border-emerald-500/20">
+              <Check className="h-4 w-4" />
+            </div>
+            <div className="flex-1 space-y-0.5">
+              <h4 className="text-xs font-black tracking-wide text-slate-855 dark:text-white uppercase">Success</h4>
+              <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 leading-snug">{successMsg}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSuccessMsg(null)}
+              className="text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 transition-colors p-0.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+
+        {errorMsg && (
+          <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border border-red-500/20 dark:border-red-500/35 shadow-2xl rounded-2xl p-4 flex items-start gap-3 w-full max-w-sm pointer-events-auto animate-in slide-in-from-top-4 duration-300">
+            <div className="p-1.5 bg-red-500/10 text-red-655 dark:text-red-400 rounded-lg border border-red-500/20">
+              <AlertCircle className="h-4 w-4" />
+            </div>
+            <div className="flex-1 space-y-0.5">
+              <h4 className="text-xs font-black tracking-wide text-slate-855 dark:text-white uppercase">Error</h4>
+              <p className="text-xs font-semibold text-slate-655 dark:text-red-450 leading-snug whitespace-pre-wrap">{errorMsg}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setErrorMsg(null)}
+              className="text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 transition-colors p-0.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* Top Navbar */}
       <header className="border-b border-slate-200 dark:border-slate-900 bg-white/70 dark:bg-slate-950/70 backdrop-blur-md sticky top-0 z-50 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -2240,7 +2540,7 @@ export default function AdminDashboard() {
           </div>
           <div>
             <span className="text-base font-extrabold tracking-tight text-slate-900 dark:text-white block">
-              Graduation Registration Portal
+              Graduation Portal
             </span>
             <span className="text-[10px] font-bold tracking-wider text-slate-500 dark:text-slate-400 block uppercase leading-none mt-0.5">
               Rajarata University of Sri Lanka
@@ -2361,7 +2661,7 @@ export default function AdminDashboard() {
                       {[
                         { id: "degrees", label: "Course Manager" },
                         { id: "timeline", label: "Timeline Control" },
-                        { id: "ingest", label: "Bulk Data Ingestion" },
+                        { id: "ingest", label: "Student Onboarding" },
                         { id: "dispatch", label: "Email Dispatcher" },
                         { id: "audit", label: "Split Audit Center" },
                         { id: "seating", label: "Session and Seating" },
@@ -2393,7 +2693,7 @@ export default function AdminDashboard() {
                 {[
                   { id: "degrees", label: "Course Manager" },
                   { id: "timeline", label: "Timeline Control" },
-                  { id: "ingest", label: "Bulk Data Ingestion" },
+                  { id: "ingest", label: "Sudent Onboarding" },
                   { id: "dispatch", label: "Email Dispatcher" },
                   { id: "audit", label: "Split Audit Center" },
                   { id: "seating", label: "Session and Seating" },
@@ -2450,18 +2750,6 @@ export default function AdminDashboard() {
 
         {/* Right Side Main Workspaces */}
         <main className="flex-1 min-w-0 md:ml-72 p-8 space-y-6 bg-slate-50/50 dark:bg-slate-950/20">
-          {successMsg && (
-            <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-500/30 text-emerald-700 dark:text-emerald-300 rounded-xl text-xs font-bold flex items-center gap-2">
-              <Check className="h-4 w-4" />
-              {successMsg}
-            </div>
-          )}
-          {errorMsg && (
-            <div className="p-3 bg-red-50 dark:bg-red-950/45 border border-red-200 dark:border-red-500/35 text-red-700 dark:text-red-300 rounded-xl text-xs font-bold flex items-center gap-2 whitespace-pre-wrap">
-              <AlertCircle className="h-4 w-4" />
-              {errorMsg}
-            </div>
-          )}
 
           {/* 1. COURSE MANAGER WORKSPACE */}
           {activeTab === "degrees" && (
@@ -2546,8 +2834,9 @@ export default function AdminDashboard() {
                         <option value="External">External</option>
                       </select>
                     </div>
+                    <div className="border border-slate-200 dark:border-slate-900 rounded-xl overflow-hidden overflow-x-auto mx-4 my-4 ">
                     <Table className="text-xs">
-                      <TableHeader className="bg-slate-100/50 dark:bg-slate-950/50">
+                      <TableHeader className="bg-slate-100/50 dark:bg-slate-800">
                         <TableRow className="border-b border-slate-200 dark:border-slate-900">
                           <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">
                             Faculty
@@ -2633,6 +2922,7 @@ export default function AdminDashboard() {
                         )}
                       </TableBody>
                     </Table>
+                    </div>
                   </CardContent>
                 </Card>
               </div>
@@ -2648,7 +2938,7 @@ export default function AdminDashboard() {
                     Bulk Faculty Student Onboarding
                   </CardTitle>
                   <CardDescription className="text-[11px] text-slate-500">
-                    Upload official Excel or CSV student registry list.
+                    Upload official Excel student registry list.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
@@ -2737,6 +3027,199 @@ export default function AdminDashboard() {
                       {renderStagingGrid(false)}
                     </div>
                   )}
+                </CardContent>
+              </Card>
+
+              {/* Imported Students Management Section */}
+              <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-2xl shadow-sm mt-6">
+                <CardHeader className="flex flex-row items-center justify-between pb-4">
+                  <div>
+                    <CardTitle className="text-base font-bold text-slate-950 dark:text-white">
+                      Imported Registry Candidates
+                    </CardTitle>
+                    <CardDescription className="text-[11px] text-slate-500">
+                      Manage and clean imported student records. Use bulk delete to undo wrong Excel ingestion sheets.
+                    </CardDescription>
+                  </div>
+                  {selectedIngestStudents.length > 0 && (
+                    <Button
+                      onClick={handleBulkDeleteStudents}
+                      className="bg-red-650 hover:bg-red-700 text-white font-bold h-9 text-xs rounded-lg px-4 shadow flex items-center gap-1.5"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Bulk Delete Selected ({selectedIngestStudents.length})
+                    </Button>
+                  )}
+                </CardHeader>
+                <CardContent className="p-0 overflow-hidden border-t border-slate-100 dark:border-slate-900">
+                  {/* Filters Row */}
+                  <div className="flex flex-wrap items-center gap-3 p-4 bg-slate-50/50 dark:bg-slate-900/10 border-b border-slate-100 dark:border-slate-900">
+                    <div className="w-full sm:w-56">
+                      <select
+                        value={ingestFacultyFilter}
+                        onChange={(e) => {
+                          setIngestFacultyFilter(e.target.value);
+                          setIngestDegreeFilter("");
+                        }}
+                        className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-100 px-3 py-1.5 rounded-lg focus:outline-none h-8 font-bold"
+                      >
+                        <option value="">All Faculties</option>
+                        {FACULTIES.map((f) => (
+                          <option key={f} value={f}>
+                            {f}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="w-full sm:w-56">
+                      <select
+                        value={ingestDegreeFilter}
+                        onChange={(e) => setIngestDegreeFilter(e.target.value)}
+                        className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-100 px-3 py-1.5 rounded-lg focus:outline-none h-8 font-bold"
+                      >
+                        <option value="">All Degrees</option>
+                        {degrees
+                          .filter((d) => !ingestFacultyFilter || d.faculty === ingestFacultyFilter)
+                          .map((d) => (
+                            <option key={d.id} value={d.id}>
+                              {d.name_en} ({d.type})
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+
+                    <div className="w-full sm:w-64 relative">
+                      <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-450" />
+                      <Input
+                        value={ingestSearchIndex}
+                        onChange={(e) => setIngestSearchIndex(e.target.value)}
+                        placeholder="Search by index, name..."
+                        className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-slate-850 dark:text-slate-100 text-xs rounded-lg pl-9 h-8 placeholder-slate-400 dark:placeholder-slate-600"
+                      />
+                    </div>
+
+                    {(ingestFacultyFilter || ingestDegreeFilter || ingestSearchIndex) && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setIngestFacultyFilter("");
+                          setIngestDegreeFilter("");
+                          setIngestSearchIndex("");
+                        }}
+                        className="text-slate-500 hover:text-slate-700 text-xs h-8 px-2 font-semibold"
+                      >
+                        Clear Filters
+                      </Button>
+                    )}
+                  </div>
+
+                  {/* Students Table */}
+                  <div className="border border-slate-200 dark:border-slate-900 rounded-xl overflow-hidden overflow-x-auto mx-4 my-4 ">
+                  <div className="overflow-x-auto">
+                    <Table className="w-full min-w-[800px] border-collapse text-left">
+                      <TableHeader className="bg-slate-100/50 dark:bg-slate-800">
+                        <TableRow className="border-b border-slate-100 dark:border-slate-900">
+                          <TableHead className="w-10 px-4 py-3">
+                            <input
+                              type="checkbox"
+                              checked={
+                                filteredIngestStudents.length > 0 &&
+                                filteredIngestStudents.every((s) => selectedIngestStudents.includes(s.id))
+                              }
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  const allIds = filteredIngestStudents.map((s) => s.id);
+                                  setSelectedIngestStudents(Array.from(new Set([...selectedIngestStudents, ...allIds])));
+                                } else {
+                                  const allIds = filteredIngestStudents.map((s) => s.id);
+                                  setSelectedIngestStudents(selectedIngestStudents.filter((id) => !allIds.includes(id)));
+                                }
+                              }}
+                              className="rounded border-slate-300 dark:border-slate-800 text-blue-600 focus:ring-blue-500 h-3.5 w-3.5 cursor-pointer"
+                            />
+                          </TableHead>
+                          <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3 text-xs w-48">
+                            Index & Registration No
+                          </TableHead>
+                          <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3 text-xs">
+                            Full Name & NIC
+                          </TableHead>
+                          <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3 text-xs w-48">
+                            Faculty
+                          </TableHead>
+                          <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3 text-xs w-48">
+                            Degree Title
+                          </TableHead>
+                          <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3 text-xs w-20 text-center">
+                            Action
+                          </TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {filteredIngestStudents.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={6} className="text-center py-8 text-slate-400 dark:text-slate-500 italic text-xs">
+                              No imported student records found matching the filters.
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          filteredIngestStudents.map((st) => (
+                            <TableRow key={st.id} className="border-b border-slate-100 dark:border-slate-900/60 hover:bg-slate-50/50 dark:hover:bg-slate-900/10">
+                              <TableCell className="px-4 py-3">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedIngestStudents.includes(st.id)}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setSelectedIngestStudents([...selectedIngestStudents, st.id]);
+                                    } else {
+                                      setSelectedIngestStudents(selectedIngestStudents.filter((id) => id !== st.id));
+                                    }
+                                  }}
+                                  className="rounded border-slate-300 dark:border-slate-800 text-blue-600 focus:ring-blue-500 h-3.5 w-3.5 cursor-pointer"
+                                />
+                              </TableCell>
+                              <TableCell className="px-4 py-3 font-mono text-xs">
+                                <div className="font-bold text-slate-850 dark:text-white">
+                                  {st.index_no}
+                                </div>
+                                <div className="text-[10px] text-slate-500 dark:text-slate-500 mt-0.5">
+                                  {st.registration_no}
+                                </div>
+                              </TableCell>
+                              <TableCell className="px-4 py-3 text-xs">
+                                <div className="font-bold text-slate-850 dark:text-white">
+                                  {st.name_with_initials}
+                                </div>
+                                <div className="text-[10px] text-slate-500 dark:text-slate-500 font-mono mt-0.5">
+                                  NIC: {st.nic_no}
+                                </div>
+                              </TableCell>
+                              <TableCell className="px-4 py-3 text-xs text-slate-500 dark:text-slate-400">
+                                {st.faculty}
+                              </TableCell>
+                              <TableCell className="px-4 py-3 text-xs text-slate-500 dark:text-slate-400">
+                                {st.degree_name_en}
+                              </TableCell>
+                              <TableCell className="px-4 py-3 text-center">
+                                <Button
+                                  variant="ghost"
+                                  size="xs"
+                                  onClick={() => handleDeleteStudent(st.id)}
+                                  className="text-red-500 hover:text-red-750 dark:text-red-400 dark:hover:text-red-300 hover:bg-red-50/50 dark:hover:bg-red-950/20 font-bold"
+                                >
+                                  Delete
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                  </div>
                 </CardContent>
               </Card>
             </div>
@@ -2846,10 +3329,11 @@ export default function AdminDashboard() {
                       Deselect All
                     </Button>
                   </div>
-
+                  
+                  <div className="border border-slate-200 dark:border-slate-900 rounded-xl overflow-hidden overflow-x-auto mx-4 my-4 ">
                   <div className="overflow-x-auto">
                     <Table className="text-xs">
-                      <TableHeader className="bg-slate-100/50 dark:bg-slate-950/50">
+                      <TableHeader className="bg-slate-100/50 dark:bg-slate-800">
                         <TableRow className="border-b border-slate-200 dark:border-slate-900">
                           <TableHead className="w-12 text-center px-4 py-3 font-bold">
                             Select
@@ -2869,6 +3353,11 @@ export default function AdminDashboard() {
                           <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">
                             Status
                           </TableHead>
+                          {dispatchType === "onboarding" && (
+                            <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3 text-center w-40">
+                              Timeline Bypass
+                            </TableHead>
+                          )}
                           <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3 text-right">
                             {dispatchType === "confirmation" ? "Certificate No" : "Magic Link"}
                           </TableHead>
@@ -2940,9 +3429,61 @@ export default function AdminDashboard() {
                                         : "bg-amber-500/10 text-amber-650 dark:text-amber-400 border border-amber-200 dark:border-amber-500/20"
                                     }`}
                                   >
-                                    {(dispatchType === "confirmation" ? student.confirmation_email_sent : student.email_sent) ? "Sent" : "Pending"}
+                                    {dispatchType === "confirmation"
+                                      ? (student.confirmation_email_sent ? "Sent" : "Pending")
+                                      : (student.email_sent ? "Sent" : "Pending")}
                                   </span>
                                 </TableCell>
+                                {dispatchType === "onboarding" && (
+                                  <TableCell className="px-4 py-2.5 text-center">
+                                    <div className="flex items-center justify-center gap-1.5">
+                                      <span
+                                        className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                          student.timeline_bypass
+                                            ? "bg-purple-500/10 text-purple-650 dark:text-purple-400 border border-purple-250/20"
+                                            : "bg-slate-500/10 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-800"
+                                        }`}
+                                      >
+                                        {student.timeline_bypass ? "Bypass Active" : "No Bypass"}
+                                      </span>
+                                      <Button
+                                        variant="ghost"
+                                        size="xs"
+                                        onClick={async () => {
+                                          const nextBypass = !student.timeline_bypass;
+                                          try {
+                                            const res = await fetch("/api/admin/review", {
+                                              method: "POST",
+                                              headers: { "Content-Type": "application/json" },
+                                              body: JSON.stringify({
+                                                studentId: student.id,
+                                                action: "toggle_bypass",
+                                                bypassState: nextBypass,
+                                              }),
+                                            });
+                                            if (res.ok) {
+                                              triggerAlert(
+                                                true,
+                                                nextBypass
+                                                  ? "Bypass granted. Candidate can register even when portal is closed."
+                                                  : "Bypass revoked."
+                                              );
+                                              loadDispatcherStudents();
+                                            } else {
+                                              const json = await res.json();
+                                              triggerAlert(false, json.error || "Failed to update bypass.");
+                                            }
+                                          } catch {
+                                            triggerAlert(false, "Connection error.");
+                                          }
+                                        }}
+                                        className="h-6 text-[10px] px-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold rounded"
+                                      >
+                                        {student.timeline_bypass ? "Revoke" : "Grant"}
+                                      </Button>
+                                    </div>
+                                  </TableCell>
+                                )}
                                 <TableCell className="px-4 py-2.5 text-right font-mono">
                                   {dispatchType === "confirmation" ? (
                                     <span className="font-bold text-blue-600 dark:text-blue-400 text-xs">
@@ -2977,6 +3518,7 @@ export default function AdminDashboard() {
                         )}
                       </TableBody>
                     </Table>
+                  </div>
                   </div>
                 </CardContent>
               </Card>
@@ -3287,7 +3829,7 @@ export default function AdminDashboard() {
                     </div>
                     <Button
                       type="button"
-                      disabled={loading || !openDate || !closeDate}
+                      disabled={loading}
                       onClick={async () => {
                         const nextState = !isManuallyClosed;
                         setIsManuallyClosed(nextState);
@@ -3297,8 +3839,7 @@ export default function AdminDashboard() {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({
-                              open_date: new Date(openDate).toISOString(),
-                              close_date: new Date(closeDate).toISOString(),
+                              toggle_only: true,
                               is_manually_closed: nextState,
                             }),
                           });
@@ -3484,9 +4025,8 @@ export default function AdminDashboard() {
                               </span>
                             </div>
                           </div>
-                          <div className="text-[10px] flex items-center justify-between text-slate-400 dark:text-slate-500 font-mono">
-                            <span>{st.index_no}</span>
-                            <span>{st.degree_code}</span>
+                          <div className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">
+                            {st.index_no}
                           </div>
                         </div>
                       ))}
@@ -3510,8 +4050,8 @@ export default function AdminDashboard() {
                           {selectedStudent.verification_status === "Approved" ? (
                             <Button
                               onClick={handleRevokeStudent}
-                              disabled={loading}
-                              className="bg-amber-600 hover:bg-amber-700 text-white font-bold h-8 text-[10px] px-3.5 rounded-lg flex items-center gap-1 shadow"
+                              disabled={loading || !selectedStudent.attendance_confirmed}
+                              className="bg-red-600 hover:bg-red-900 text-white font-bold h-8 text-[10px] px-3.5 rounded-lg flex items-center gap-1 shadow disabled:opacity-50"
                             >
                               <RefreshCw className="h-3.5 w-3.5" />
                               Revoke Approval
@@ -3532,8 +4072,8 @@ export default function AdminDashboard() {
                               </Button>
                               <Button
                                 onClick={() => setShowRejectDialog(true)}
-                                disabled={loading}
-                                className="bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-red-600 dark:text-red-400 border border-slate-200 dark:border-slate-850 font-bold h-8 text-[10px] px-3.5 rounded-lg flex items-center gap-1"
+                                disabled={loading || !selectedStudent.attendance_confirmed}
+                                className="bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-red-600 dark:text-red-400 border border-slate-200 dark:border-slate-855 font-bold h-8 text-[10px] px-3.5 rounded-lg flex items-center gap-1 disabled:opacity-50"
                               >
                                 <X className="h-3.5 w-3.5" />
                                 Reject & Unlock
@@ -3556,29 +4096,6 @@ export default function AdminDashboard() {
                             <h4 className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">
                               Original Faculty Import
                             </h4>
-
-                            <div className="space-y-1">
-                              <span className="text-[9px] text-slate-400 dark:text-slate-600 font-bold block">
-                                CONVOCATION ATTENDANCE
-                              </span>
-                              <span
-                                className={`text-xs font-bold px-2 py-0.5 rounded inline-block ${
-                                  selectedStudent.attending_convocation === true
-                                    ? "bg-blue-500/10 border border-blue-200 dark:border-blue-500/20 text-blue-600 dark:text-blue-400"
-                                    : selectedStudent.attending_convocation ===
-                                        false
-                                      ? "bg-slate-500/10 border border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400"
-                                      : "bg-yellow-500/10 border border-yellow-250/20 text-yellow-600 dark:text-yellow-400"
-                                }`}
-                              >
-                                {selectedStudent.attending_convocation === true
-                                  ? "Attending Convocation Day"
-                                  : selectedStudent.attending_convocation ===
-                                      false
-                                    ? "Not Attending (In Absentia)"
-                                    : "Undecided / No Response yet"}
-                              </span>
-                            </div>
 
                             <div className="space-y-1">
                               <span className="text-[9px] text-slate-400 dark:text-slate-600 font-bold block">
@@ -3625,6 +4142,29 @@ export default function AdminDashboard() {
 
                             <div className="space-y-1">
                               <span className="text-[9px] text-slate-400 dark:text-slate-600 font-bold block">
+                                CONVOCATION ATTENDANCE
+                              </span>
+                              <span
+                                className={`text-xs font-bold px-2 py-0.5 rounded inline-block ${
+                                  selectedStudent.attending_convocation === true
+                                    ? "bg-blue-500/10 border border-blue-200 dark:border-blue-500/20 text-blue-600 dark:text-blue-400"
+                                    : selectedStudent.attending_convocation ===
+                                        false
+                                      ? "bg-slate-500/10 border border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400"
+                                      : "bg-yellow-500/10 border border-yellow-250/20 text-yellow-600 dark:text-yellow-400"
+                                }`}
+                              >
+                                {selectedStudent.attending_convocation === true
+                                  ? "Attending Convocation Day"
+                                  : selectedStudent.attending_convocation ===
+                                      false
+                                    ? "Not Attending (In Absentia)"
+                                    : "Undecided / No Response yet"}
+                              </span>
+                            </div>
+
+                            <div className="space-y-1">
+                              <span className="text-[9px] text-slate-400 dark:text-slate-600 font-bold block">
                                 SPELLING CORRECTION REQUEST
                               </span>
                               {selectedStudent.name_correction_request ? (
@@ -3643,13 +4183,21 @@ export default function AdminDashboard() {
                                 PROFILE PHOTO
                               </span>
                               {selectedStudent.profile_photo_path ? (
-                                <div className="relative aspect-square w-20 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-950 flex items-center justify-center">
+                                <a
+                                  href={selectedStudent.profile_photo_path}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  onMouseEnter={() => setPreviewUrl(selectedStudent.profile_photo_path)}
+                                  onMouseLeave={() => setPreviewUrl(null)}
+                                  className="relative aspect-square w-20 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-950 flex items-center justify-center cursor-pointer hover:border-blue-500 transition block"
+                                  title="Click to view full size photo in new tab"
+                                >
                                   <img
                                     src={selectedStudent.profile_photo_path}
                                     alt="Submission"
                                     className="object-cover w-full h-full"
                                   />
-                                </div>
+                                </a>
                               ) : (
                                 <span className="text-xs font-semibold text-slate-400 dark:text-slate-500 block italic">
                                   Photo missing
@@ -3666,7 +4214,9 @@ export default function AdminDashboard() {
                                   href={selectedStudent.payment_slip_path}
                                   target="_blank"
                                   rel="noreferrer"
-                                  className="inline-flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-500 hover:underline font-bold"
+                                  onMouseEnter={() => setPreviewUrl(selectedStudent.payment_slip_path)}
+                                  onMouseLeave={() => setPreviewUrl(null)}
+                                  className="inline-flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-500 hover:underline font-bold animate-in fade-in"
                                 >
                                   <FileText className="h-4 w-4" />
                                   View Uploaded Slip
@@ -3692,9 +4242,10 @@ export default function AdminDashboard() {
                     Immutable Audit Trail Logs
                   </CardTitle>
                 </CardHeader>
+                <div className="border border-slate-200 dark:border-slate-900 rounded-xl overflow-hidden overflow-x-auto mx-4 my-4 ">
                 <CardContent className="p-0 overflow-hidden border-t border-slate-100 dark:border-slate-900">
-                  <Table className="text-xs">
-                    <TableHeader className="bg-slate-100/50 dark:bg-slate-950/50">
+                  <Table className="text-xs">                
+                    <TableHeader className="bg-slate-100/50 dark:bg-slate-800">
                       <TableRow className="border-b border-slate-200 dark:border-slate-900">
                         <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">
                           Timestamp
@@ -3755,6 +4306,7 @@ export default function AdminDashboard() {
                     </TableBody>
                   </Table>
                 </CardContent>
+                </div>
               </Card>
 
               {/* Rejection popup prompt */}
@@ -4313,9 +4865,10 @@ export default function AdminDashboard() {
                       Currently configured system accounts.
                     </CardDescription>
                   </CardHeader>
+                  <div className="border border-slate-200 dark:border-slate-900 rounded-xl overflow-hidden overflow-x-auto mx-4 my-4 ">
                   <CardContent className="p-0 overflow-hidden border-t border-slate-100 dark:border-slate-900">
                     <Table className="text-xs">
-                      <TableHeader className="bg-slate-100/50 dark:bg-slate-950/50">
+                      <TableHeader className="bg-slate-100/50 dark:bg-slate-800">
                         <TableRow className="border-b border-slate-200 dark:border-slate-900">
                           <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">
                             Full Name
@@ -4426,6 +4979,7 @@ export default function AdminDashboard() {
                       </TableBody>
                     </Table>
                   </CardContent>
+                  </div>
                 </Card>
               </div>
             </div>
@@ -4728,18 +5282,18 @@ export default function AdminDashboard() {
 
                   <div className="border border-slate-200 dark:border-slate-900 rounded-xl overflow-hidden overflow-x-auto">
                     <Table className="text-xs min-w-[800px]">
-                      <TableHeader className="bg-slate-100 dark:bg-slate-950/50">
+                      <TableHeader className="bg-slate-100 dark:bg-slate-800">
                         <TableRow className="border-b border-slate-200 dark:border-slate-900">
-                          <TableHead className="text-slate-650 dark:text-white font-bold px-4 py-3 w-40">
+                          <TableHead className="text-slate-600 dark:text-white font-bold px-4 py-3 w-40">
                             Timestamp
                           </TableHead>
-                          <TableHead className="text-slate-650 dark:text-white font-bold px-4 py-3 w-40">
+                          <TableHead className="text-slate-600 dark:text-white font-bold px-4 py-3 w-40">
                             Actor
                           </TableHead>
-                          <TableHead className="text-slate-650 dark:text-white font-bold px-4 py-3">
+                          <TableHead className="text-slate-600 dark:text-white font-bold px-4 py-3">
                             Target Candidate
                           </TableHead>
-                          <TableHead className="text-slate-650 dark:text-white font-bold px-4 py-3">
+                          <TableHead className="text-slate-600 dark:text-white font-bold px-4 py-3">
                             Action Recorded
                           </TableHead>
                         </TableRow>
@@ -4844,7 +5398,7 @@ export default function AdminDashboard() {
                           setRegistryFaculty(e.target.value);
                           setRegistryDegree("");
                         }}
-                        className="w-full bg-white dark:bg-slate-955 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-350 px-3 py-1.5 rounded-lg focus:outline-none h-8 font-bold"
+                        className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-100 px-3 py-1.5 rounded-lg focus:outline-none h-8 font-bold"
                       >
                         <option value="">All Faculties</option>
                         {FACULTIES.map((f) => (
@@ -4866,7 +5420,7 @@ export default function AdminDashboard() {
                         id="regDegree"
                         value={registryDegree}
                         onChange={(e) => setRegistryDegree(e.target.value)}
-                        className="w-full bg-white dark:bg-slate-955 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-355 px-3 py-1.5 rounded-lg focus:outline-none h-8 font-bold"
+                        className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-100 px-3 py-1.5 rounded-lg focus:outline-none h-8 font-bold"
                       >
                         <option value="">All Degrees</option>
                         {degrees
@@ -4893,7 +5447,7 @@ export default function AdminDashboard() {
                         id="regSession"
                         value={registrySession}
                         onChange={(e) => setRegistrySession(e.target.value)}
-                        className="w-full bg-white dark:bg-slate-955 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-355 px-3 py-1.5 rounded-lg focus:outline-none h-8 font-bold"
+                        className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-100 px-3 py-1.5 rounded-lg focus:outline-none h-8 font-bold"
                       >
                         <option value="">All Sessions</option>
                         {SESSIONS.map((s) => (
@@ -4915,7 +5469,7 @@ export default function AdminDashboard() {
                         id="regAtt"
                         value={registryAttendance}
                         onChange={(e) => setRegistryAttendance(e.target.value)}
-                        className="w-full bg-white dark:bg-slate-955 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-355 px-3 py-1.5 rounded-lg focus:outline-none h-8 font-bold"
+                        className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-100  px-3 py-1.5 rounded-lg focus:outline-none h-8 font-bold"
                       >
                         <option value="">All Attendance</option>
                         <option value="true">Attending</option>
@@ -4975,25 +5529,25 @@ export default function AdminDashboard() {
                           <TableHead className="w-16 px-4 py-3 text-center font-bold">
                             Photo
                           </TableHead>
-                          <TableHead className="text-slate-650 dark:text-slate-400 font-bold px-4 py-3">
+                          <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">
                             Candidate Details
                           </TableHead>
-                          <TableHead className="text-slate-650 dark:text-slate-400 font-bold px-4 py-3">
+                          <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">
                             Degree & Faculty
                           </TableHead>
-                          <TableHead className="text-slate-650 dark:text-slate-400 font-bold px-4 py-3">
+                          <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">
                             Certificate No
                           </TableHead>
-                          <TableHead className="text-slate-650 dark:text-slate-400 font-bold px-4 py-3">
+                          <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">
                             Seating Info
                           </TableHead>
-                          <TableHead className="text-slate-650 dark:text-slate-400 font-bold px-4 py-3">
+                          <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">
                             Verification & Attendance
                           </TableHead>
-                          <TableHead className="text-slate-650 dark:text-slate-400 font-bold px-4 py-3">
+                          <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">
                             Corrections
                           </TableHead>
-                          <TableHead className="text-slate-650 dark:text-slate-400 font-bold px-4 py-3 text-center">
+                          <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3 text-center">
                             Receipt
                           </TableHead>
                         </TableRow>
@@ -5043,7 +5597,7 @@ export default function AdminDashboard() {
                               {/* Degree & Faculty */}
                               <TableCell className="px-4 py-2.5">
                                 <div className="text-slate-800 dark:text-slate-200">
-                                  {st.degree_name_en || st.degree_code || "N/A"}
+                                  {st.degree_name_en || "N/A"}
                                 </div>
                                 <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
                                   {st.faculty}
@@ -5355,7 +5909,7 @@ export default function AdminDashboard() {
                 <div className="space-y-1.5">
                   <Label
                     htmlFor="degFaculty"
-                    className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-"
+                    className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-"
                   >
                     Faculty
                   </Label>
@@ -5363,7 +5917,7 @@ export default function AdminDashboard() {
                     id="degFaculty"
                     value={degFaculty}
                     onChange={(e) => setDegFaculty(e.target.value)}
-                    className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-100 dark:text-slate-350 px-3 py-2 rounded-lg focus:outline-none h-9"
+                    className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-350 px-3 py-2 rounded-lg focus:outline-none h-9"
                   >
                     {FACULTIES.map((fac) => (
                       <option key={fac} value={fac}>

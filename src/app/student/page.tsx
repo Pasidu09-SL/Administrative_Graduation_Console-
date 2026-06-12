@@ -56,6 +56,20 @@ export default function StudentDashboard() {
     fetchProfile();
   }, []);
 
+  useEffect(() => {
+    if (saveSuccess) {
+      const timer = setTimeout(() => setSaveSuccess(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [saveSuccess]);
+
+  useEffect(() => {
+    if (error) {
+      const timer = setTimeout(() => setError(null), 6000);
+      return () => clearTimeout(timer);
+    }
+  }, [error]);
+
   const handleLogout = async () => {
     await fetch('/api/student/auth/logout', { method: 'POST' });
     router.push('/');
@@ -260,6 +274,47 @@ export default function StudentDashboard() {
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-50 flex flex-col transition-colors duration-200">
+      {/* Floating Toast Container */}
+      <div className="fixed top-6 right-6 z-[100] flex flex-col gap-3 w-full max-w-sm pointer-events-none">
+        {saveSuccess && (
+          <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border border-emerald-500/20 dark:border-emerald-500/35 shadow-2xl rounded-2xl p-4 flex items-start gap-3 w-full max-w-sm pointer-events-auto animate-in slide-in-from-top-4 duration-300">
+            <div className="p-1.5 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-lg border border-emerald-500/20">
+              <CheckCircle2 className="h-4 w-4" />
+            </div>
+            <div className="flex-1 space-y-0.5">
+              <h4 className="text-xs font-black tracking-wide text-slate-855 dark:text-white uppercase">Success</h4>
+              <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 leading-snug">{saveSuccess}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSaveSuccess(null)}
+              className="text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 transition-colors p-0.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+
+        {error && (
+          <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border border-red-500/20 dark:border-red-500/35 shadow-2xl rounded-2xl p-4 flex items-start gap-3 w-full max-w-sm pointer-events-auto animate-in slide-in-from-top-4 duration-300">
+            <div className="p-1.5 bg-red-500/10 text-red-655 dark:text-red-400 rounded-lg border border-red-500/20">
+              <AlertTriangle className="h-4 w-4" />
+            </div>
+            <div className="flex-1 space-y-0.5">
+              <h4 className="text-xs font-black tracking-wide text-slate-855 dark:text-white uppercase">Error</h4>
+              <p className="text-xs font-semibold text-slate-655 dark:text-red-450 leading-snug whitespace-pre-wrap">{error}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setError(null)}
+              className="text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 transition-colors p-0.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* Top Navbar */}
       <header className="border-b border-slate-200 dark:border-slate-900 bg-white/70 dark:bg-slate-950/70 backdrop-blur-md sticky top-0 z-50 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -404,16 +459,6 @@ export default function StudentDashboard() {
           </div>
         ) : null}
 
-        {error && (
-          <div className="p-3 bg-red-50 dark:bg-red-950/45 border border-red-200 dark:border-red-500/35 text-red-700 dark:text-red-300 rounded-xl text-xs font-semibold">
-            {error}
-          </div>
-        )}
-        {saveSuccess && (
-          <div className="p-3 bg-blue-50 dark:bg-blue-950/45 border border-blue-200 dark:border-blue-500/35 text-blue-700 dark:text-blue-300 rounded-xl text-xs font-semibold">
-            {saveSuccess}
-          </div>
-        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           

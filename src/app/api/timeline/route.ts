@@ -29,6 +29,49 @@ export async function POST(req: Request) {
     }
 
     const body = await req.json();
+
+    if (body.toggle_only) {
+      const is_manually_closed = !!body.is_manually_closed;
+      const data = await runAsAdmin(async (client) => {
+        const prevRes = await client.query(
+          'SELECT * FROM registration_windows WHERE is_active = TRUE LIMIT 1'
+        );
+        let prev = prevRes.rows[0];
+        if (!prev) {
+          const fallback = await client.query('SELECT * FROM registration_windows ORDER BY id DESC LIMIT 1');
+          prev = fallback.rows[0];
+        }
+
+        const activeYear = prev?.convocation_year || '2026';
+
+        const res = await client.query(
+          `INSERT INTO registration_windows (convocation_year, open_date, close_date, is_manually_closed, is_active)
+           VALUES ($1, $2, $3, $4, TRUE)
+           ON CONFLICT (convocation_year) 
+           DO UPDATE SET 
+             is_manually_closed = EXCLUDED.is_manually_closed,
+             is_active = TRUE
+           RETURNING *`,
+          [activeYear, prev ? prev.open_date : new Date(), prev ? prev.close_date : new Date(Date.now() + 86400000), is_manually_closed]
+        );
+        const newConfig = res.rows[0];
+
+        const actionText = is_manually_closed
+          ? `Emergency override activated: Portal closed manually for year ${activeYear}`
+          : `Emergency override deactivated: Resumed timeline schedule for year ${activeYear}`;
+
+        await client.query(
+          `INSERT INTO audit_logs (admin_id, action_taken, student_id)
+           VALUES ($1, $2, NULL)`,
+          [session.username, actionText]
+        );
+
+        return newConfig;
+      });
+
+      return NextResponse.json({ success: true, data });
+    }
+
     const parsed = timelineSchema.safeParse(body);
     if (!parsed.success) {
       return NextResponse.json({

@@ -219,6 +219,7 @@ export async function runMigrations() {
         ALTER TABLE students ADD COLUMN IF NOT EXISTS convocation_year VARCHAR(50) DEFAULT '2026';
         ALTER TABLE students ADD COLUMN IF NOT EXISTS confirmation_email_sent BOOLEAN DEFAULT FALSE;
         ALTER TABLE students ADD COLUMN IF NOT EXISTS import_order SERIAL;
+        ALTER TABLE students ADD COLUMN IF NOT EXISTS timeline_bypass BOOLEAN DEFAULT FALSE;
       `);
 
       // 5. Relax session constraint on students

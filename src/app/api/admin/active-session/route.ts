@@ -72,23 +72,22 @@ export async function POST(req: Request) {
 
       let res;
       if (existingRes.rows.length > 0) {
-        // Just set it as active
+        // Just set it as active, do NOT touch is_manually_closed status
         res = await client.query(
           `UPDATE registration_windows 
-           SET is_active = TRUE, is_manually_closed = FALSE 
+           SET is_active = TRUE 
            WHERE convocation_year = $1 
            RETURNING *`,
           [yearStr],
         );
       } else {
-        // Create new one with default active timeline window (from 1 day ago to 30 days in the future)
-        const openTime = new Date(Date.now() - 24 * 60 * 60 * 1000);
-        const closeTime = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+        // Create new one with epoch date timeline (1970-01-01) so it stays closed by default
+        const epoch = new Date(0);
         res = await client.query(
           `INSERT INTO registration_windows (convocation_year, open_date, close_date, is_manually_closed, is_active)
            VALUES ($1, $2, $3, FALSE, TRUE)
            RETURNING *`,
-          [yearStr, openTime, closeTime],
+          [yearStr, epoch, epoch],
         );
       }
 

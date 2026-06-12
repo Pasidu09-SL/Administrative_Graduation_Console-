@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { runAsAdmin } from '@/lib/db';
 import { getAdminSession, signMagicToken } from '@/lib/auth';
 import { sendEmail, getRejectionTemplate } from '@/lib/email';
+import fs from 'fs';
+import path from 'path';
 
 export async function GET(req: Request) {
   try {
@@ -91,7 +93,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { studentId, action, rejectReason } = await req.json();
+    const { studentId, action, rejectReason, bypassState } = await req.json();
     const adminId = session.username;
 
     if (!studentId || !action) {
@@ -185,8 +187,20 @@ export async function POST(req: Request) {
         } catch (err: any) {
           console.error(`Failed to send rejection email to ${student.email}:`, err.message);
         }
+      } else if (action === 'toggle_bypass') {
+        const nextBypass = !!bypassState;
+        await client.query(
+          `UPDATE students
+           SET timeline_bypass = $1,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = $2`,
+          [nextBypass, studentId]
+        );
+        actionText = nextBypass
+          ? `Granted timeline window bypass to candidate.`
+          : `Revoked timeline window bypass from candidate.`;
       } else {
-        throw new Error('Invalid action type. Must be approve or reject.');
+        throw new Error('Invalid action type.');
       }
 
       // 2. Insert into audit logs
@@ -199,12 +213,75 @@ export async function POST(req: Request) {
 
       return {
         studentId,
-        verificationStatus: action === 'approve' ? 'Approved' : 'Name Correction Requested',
+        verificationStatus: student.verification_status,
         auditLog: logRes.rows[0]
       };
     });
 
     return NextResponse.json({ success: true, data: result });
+  } catch (err: any) {
+    return NextResponse.json({ success: false, error: err.message }, { status: 400 });
+  }
+}
+
+export async function DELETE(req: Request) {
+  try {
+    const session = await getAdminSession();
+    if (!session) {
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const { studentId, studentIds } = await req.json();
+    const adminId = session.username;
+
+    if (!studentId && (!studentIds || studentIds.length === 0)) {
+      return NextResponse.json({ success: false, error: 'Either studentId or studentIds must be provided.' }, { status: 400 });
+    }
+
+    const idsToDelete = studentIds ? studentIds : [studentId];
+
+    await runAsAdmin(async (client) => {
+      // Fetch details of students to log their deletion and retrieve files to delete
+      const studentsRes = await client.query(
+        'SELECT index_no, full_name, faculty, email, profile_photo_path, payment_slip_path FROM students WHERE id = ANY($1)',
+        [idsToDelete]
+      );
+      
+      // Delete the students (related records in audit_logs are cascade deleted because of REFERENCES students(id) ON DELETE CASCADE)
+      await client.query('DELETE FROM students WHERE id = ANY($1)', [idsToDelete]);
+
+      // Write a system audit log for the deletion action and clean up OTP and files
+      for (const st of studentsRes.rows) {
+        await client.query(
+          `INSERT INTO audit_logs (admin_id, action_taken)
+           VALUES ($1, $2)`,
+          [adminId, `Deleted student from registry: Index No=${st.index_no}, Name=${st.full_name}, Faculty=${st.faculty}`]
+        );
+
+        // Delete their OTP codes from the database
+        await client.query('DELETE FROM otp_codes WHERE LOWER(email) = LOWER($1)', [st.email.toLowerCase().trim()]);
+
+        // Clean up uploaded files from disk
+        try {
+          if (st.profile_photo_path) {
+            const photoPath = path.join(process.cwd(), 'public', st.profile_photo_path);
+            if (fs.existsSync(photoPath)) {
+              fs.unlinkSync(photoPath);
+            }
+          }
+          if (st.payment_slip_path) {
+            const slipPath = path.join(process.cwd(), 'public', st.payment_slip_path);
+            if (fs.existsSync(slipPath)) {
+              fs.unlinkSync(slipPath);
+            }
+          }
+        } catch (fileErr) {
+          console.error("Failed to delete student uploaded files:", fileErr);
+        }
+      }
+    });
+
+    return NextResponse.json({ success: true });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 400 });
   }

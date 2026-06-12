@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { verifyMagicToken } from '@/lib/auth';
+import { verifyMagicToken, isRegistrationWindowOpen } from '@/lib/auth';
+import { runAsAdmin } from '@/lib/db';
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -15,6 +16,27 @@ export async function GET(req: Request) {
     const payload = verifyMagicToken(token);
     if (!payload) {
       return NextResponse.redirect(new URL('/?error=Invalid%20or%20expired%20magic%20link', req.url));
+    }
+
+    // Check registration window status
+    const mockTime = req.headers.get('x-mock-time');
+    const { isOpen } = await isRegistrationWindowOpen(mockTime);
+    if (!isOpen) {
+      const hasBypass = await runAsAdmin(async (client) => {
+        const activeYearRes = await client.query(
+          "SELECT convocation_year FROM registration_windows WHERE is_active = TRUE LIMIT 1"
+        );
+        const activeYear = activeYearRes.rows[0]?.convocation_year || '2026';
+        const res = await client.query(
+          'SELECT timeline_bypass FROM students WHERE LOWER(email) = LOWER($1) AND convocation_year = $2',
+          [payload.email, activeYear]
+        );
+        return res.rows[0]?.timeline_bypass === true;
+      });
+
+      if (!hasBypass) {
+        return NextResponse.redirect(new URL('/?error=Portal%20Closed', req.url));
+      }
     }
 
     // 2. Ensure the email parameter matches the token payload (prevent token reuse for other accounts)

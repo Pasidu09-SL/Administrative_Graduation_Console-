@@ -88,6 +88,7 @@ CREATE TABLE students (
   certificate_number VARCHAR(100),
   confirmation_email_sent BOOLEAN DEFAULT FALSE,
   import_order SERIAL,
+  timeline_bypass BOOLEAN DEFAULT FALSE,
   
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,

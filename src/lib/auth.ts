@@ -134,7 +134,7 @@ export function signMagicToken(email: string, index_no: string): string {
   const payload = {
     email: email.toLowerCase().trim(),
     index_no: index_no.trim(),
-    exp: Date.now() + 7 * 24 * 60 * 60 * 1000 // 7 days expiry
+    exp: Date.now() + 30 * 24 * 60 * 60 * 1000 // 30 days expiry
   };
   const data = JSON.stringify(payload);
   const signature = crypto.createHmac('sha256', SECRET).update(data).digest('hex');
