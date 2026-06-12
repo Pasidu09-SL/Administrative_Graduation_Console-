@@ -39,6 +39,13 @@ export async function POST(req: Request) {
       );
     }
 
+    if (staffMember.status === 'Disabled') {
+      return NextResponse.json(
+        { success: false, error: 'Account disabled. Please contact your administrator.' },
+        { status: 403 }
+      );
+    }
+
     // Create session token
     const token = signAdminToken({
       username: staffMember.username,

@@ -514,6 +514,11 @@ export async function POST(req: Request) {
 
     // Query approved students with assigned seating/certificate numbers matching selected faculty & degree
     const students = await runAsAdmin(async (client) => {
+      const activeYearRes = await client.query(
+        "SELECT convocation_year FROM registration_windows WHERE is_active = TRUE LIMIT 1"
+      );
+      const activeYear = activeYearRes.rows[0]?.convocation_year || '2026';
+
       const res = await client.query(`
         SELECT s.id, s.full_name, s.index_no, s.certificate_number, d.name_en as degree_name_en, d.name_si as degree_name_si, d.name_ta as degree_name_ta, d.type as degree_type
         FROM students s
@@ -522,8 +527,9 @@ export async function POST(req: Request) {
           AND s.certificate_number IS NOT NULL
           AND s.faculty = $1
           AND s.degree_id = $2
+          AND s.convocation_year = $3
         ORDER BY s.index_no ASC
-      `, [faculty, degreeId]);
+      `, [faculty, degreeId, activeYear]);
       return res.rows;
     });
 

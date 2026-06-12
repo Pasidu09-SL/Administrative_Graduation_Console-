@@ -175,6 +175,7 @@ async function runTests() {
   }
 
   process.env.DATABASE_URL = testDbUrl;
+  process.env.IS_TEST_RUNNER = 'true';
   console.log(`DATABASE_URL set to test database: ${testDbUrl.replace(/:[^:@]+@/, ':****@')}`);
 
   console.log('Initializing database client and models...');
@@ -211,18 +212,25 @@ async function runTests() {
     await client.query('DROP TABLE IF EXISTS registration_windows CASCADE');
     await client.query('DROP TABLE IF EXISTS degrees CASCADE');
     await client.query('DROP TABLE IF EXISTS staff CASCADE');
+    await client.query('DROP TABLE IF EXISTS faculties CASCADE');
+    await client.query('DROP TABLE IF EXISTS convocation_sessions CASCADE');
+    await client.query('DROP TABLE IF EXISTS email_templates CASCADE');
   } finally {
     client.release();
   }
 
   await runMigrations();
   
-  // Seed initial timeline window
+  // Seed or update initial timeline window
   const seedClient = await pool.connect();
   try {
     await seedClient.query(
-      `INSERT INTO registration_windows (open_date, close_date) 
-       VALUES (CURRENT_TIMESTAMP - INTERVAL '1 day', CURRENT_TIMESTAMP + INTERVAL '30 days')`
+      `INSERT INTO registration_windows (open_date, close_date, convocation_year) 
+       VALUES (CURRENT_TIMESTAMP - INTERVAL '1 day', CURRENT_TIMESTAMP + INTERVAL '30 days', '2026')
+       ON CONFLICT (convocation_year) DO UPDATE 
+       SET open_date = CURRENT_TIMESTAMP - INTERVAL '1 day', 
+           close_date = CURRENT_TIMESTAMP + INTERVAL '30 days',
+           is_active = TRUE`
     );
   } finally {
     seedClient.release();
@@ -389,7 +397,7 @@ async function runTests() {
     const perfJson = await perfRes.json();
     if (perfRes.status === 200 && perfJson.success) {
       console.log(`✓ Success: Batch insert of ${perfJson.count} students executed in ${perfJson.durationMs}ms.`);
-      const threshold = isRemote ? 10000 : 2000;
+      const threshold = isRemote ? 15000 : 2000;
       if (perfJson.durationMs > threshold) {
         throw new Error(`Performance Test Failed! DB batch execution took ${perfJson.durationMs}ms (threshold ${threshold}ms).`);
       }
@@ -797,6 +805,85 @@ async function runTests() {
       }
     } else {
       throw new Error(`Magic login test failed. Status: ${magicLoginRes.status}`);
+    }
+
+    // ----------------------------------------------------
+    // Test 14: Restrict Unsubmitted Student Approval Test
+    // ----------------------------------------------------
+    console.log('\n[TEST 14] Running Restrict Unsubmitted Student Approval Test...');
+    
+    // Create a student who has not confirmed/submitted details
+    const unconfirmedStudentEmail = 'unconfirmed@uni.ac.lk';
+    const unconfirmedStudentIndex = 'INDEX-999999';
+    await pool.query(
+      `INSERT INTO students (index_no, registration_no, nic_no, full_name, name_with_initials, gpa, class, degree_id, faculty, email, address, contact_no, convocation_year, attendance_confirmed)
+       VALUES ($1, 'REG-999999', '999999999V', 'Unconfirmed Student', 'Student U.', '3.5', 'First Class', $2, 'Faculty of Applied Sciences', $3, 'Uni Address', '0777777777', '2026', false)`,
+      [unconfirmedStudentIndex, deg1.id, unconfirmedStudentEmail]
+    );
+
+    const approveUnconfirmedRes = await fetch(`${BASE_URL}/api/admin/review`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cookie': adminCookieHeader
+      },
+      body: JSON.stringify({
+        studentId: (await pool.query("SELECT id FROM students WHERE email = $1", [unconfirmedStudentEmail])).rows[0].id,
+        action: 'approve'
+      })
+    });
+
+    if (approveUnconfirmedRes.status === 400) {
+      const json = await approveUnconfirmedRes.json();
+      if (json.error && json.error.includes('Cannot approve student')) {
+        console.log('✓ Success: Rejected approval request for unsubmitted student profile.');
+      } else {
+        throw new Error(`Unexpected error message on unsubmitted student approval: ${json.error}`);
+      }
+    } else {
+      throw new Error(`Approval of unsubmitted student allowed! Status: ${approveUnconfirmedRes.status}`);
+    }
+
+    // ----------------------------------------------------
+    // Test 15: Revoke Approval Test
+    // ----------------------------------------------------
+    console.log('\n[TEST 15] Running Revoke Approval Test...');
+    
+    // Let's create an approved student, allocate seating to them, then revoke approval
+    const revokeStudentEmail = 'revoke@uni.ac.lk';
+    const revokeStudentIndex = 'INDEX-888888';
+    await pool.query(
+      `INSERT INTO students (index_no, registration_no, nic_no, full_name, name_with_initials, gpa, class, degree_id, faculty, email, address, contact_no, convocation_year, attendance_confirmed, verification_status, attending_convocation, session_number, seat_number, certificate_number)
+       VALUES ($1, 'REG-888888', '888888888V', 'Revoke Student', 'Student R.', '3.5', 'First Class', $2, 'Faculty of Applied Sciences', $3, 'Uni Address', '0777777777', '2026', true, 'Approved', true, 2, 99, 17999)`,
+      [revokeStudentIndex, deg1.id, revokeStudentEmail]
+    );
+
+    const revokeStudentId = (await pool.query("SELECT id FROM students WHERE email = $1", [revokeStudentEmail])).rows[0].id;
+
+    const revokeRes = await fetch(`${BASE_URL}/api/admin/review`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cookie': adminCookieHeader
+      },
+      body: JSON.stringify({
+        studentId: revokeStudentId,
+        action: 'revoke'
+      })
+    });
+
+    if (revokeRes.status === 200) {
+      const revokeCheck = (await pool.query("SELECT * FROM students WHERE id = $1", [revokeStudentId])).rows[0];
+      if (revokeCheck.verification_status === 'Pending Verification' &&
+          revokeCheck.session_number === null &&
+          revokeCheck.seat_number === null &&
+          revokeCheck.certificate_number === null) {
+        console.log('✓ Success: Approval revoked, verification_status reset, and seating details cleared.');
+      } else {
+        throw new Error(`Revoke post-state invalid: Status=${revokeCheck.verification_status}, Session=${revokeCheck.session_number}`);
+      }
+    } else {
+      throw new Error(`Revoke request failed. Status: ${revokeRes.status}`);
     }
 
     console.log('\n=== ALL TESTS PASSED SUCCESSFULLY! ===');

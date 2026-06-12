@@ -39,9 +39,13 @@ export function verifyToken(token: string): AuthUser | null {
 export async function isRegistrationWindowOpen(mockTimeHeader?: string | null): Promise<{ isOpen: boolean; window: any }> {
   const activeWindow = await runAsAdmin(async (client) => {
     const res = await client.query(
-      'SELECT open_date, close_date, is_manually_closed FROM registration_windows ORDER BY id DESC LIMIT 1'
+      'SELECT open_date, close_date, is_manually_closed, convocation_year FROM registration_windows WHERE is_active = TRUE LIMIT 1'
     );
-    return res.rows[0] || null;
+    if (res.rows.length > 0) return res.rows[0];
+    const fallback = await client.query(
+      'SELECT open_date, close_date, is_manually_closed, convocation_year FROM registration_windows ORDER BY id DESC LIMIT 1'
+    );
+    return fallback.rows[0] || null;
   });
 
   if (!activeWindow) {

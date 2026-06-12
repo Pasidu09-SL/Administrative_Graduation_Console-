@@ -16,11 +16,23 @@ export async function GET(req: Request) {
     const status = searchParams.get('status');
     const attending = searchParams.get('attending');
     const responseStatus = searchParams.get('responseStatus');
+    const convocationYear = searchParams.get('convocationYear');
+    const sessionNum = searchParams.get('session');
 
     const data = await runAsAdmin(async (client) => {
+      const activeYearRes = await client.query(
+        "SELECT convocation_year FROM registration_windows WHERE is_active = TRUE LIMIT 1"
+      );
+      const activeYear = activeYearRes.rows[0]?.convocation_year || '2026';
+      const yearToFilter = convocationYear || activeYear;
+
       const conditions: string[] = [];
       const values: any[] = [];
       let index = 1;
+
+      conditions.push(`s.convocation_year = $${index}`);
+      values.push(yearToFilter);
+      index++;
 
       if (faculty) {
         conditions.push(`s.faculty = $${index}`);
@@ -40,6 +52,11 @@ export async function GET(req: Request) {
       if (attending !== null && attending !== undefined && attending !== '') {
         conditions.push(`s.attending_convocation = $${index}`);
         values.push(attending === 'true');
+        index++;
+      }
+      if (sessionNum && !isNaN(parseInt(sessionNum, 10))) {
+        conditions.push(`s.session_number = $${index}`);
+        values.push(parseInt(sessionNum, 10));
         index++;
       }
       if (responseStatus === 'pending') {
@@ -91,6 +108,9 @@ export async function POST(req: Request) {
 
       let actionText = '';
       if (action === 'approve') {
+        if (!student.attendance_confirmed) {
+          throw new Error('Cannot approve student who has not filled and submitted their registration details.');
+        }
         const oldName = student.full_name;
         const newName = student.name_correction_request ? student.name_correction_request.trim() : student.full_name;
 
@@ -109,6 +129,19 @@ export async function POST(req: Request) {
         if (oldName !== newName) {
           actionText += ` Name updated from "${oldName}" to "${newName}".`;
         }
+      } else if (action === 'revoke') {
+        // Revoke approval: reset verification_status to 'Pending Verification', and clear session, seat, and certificate numbers
+        await client.query(
+          `UPDATE students
+           SET verification_status = 'Pending Verification',
+               session_number = NULL,
+               seat_number = NULL,
+               certificate_number = NULL,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = $1`,
+          [studentId]
+        );
+        actionText = `Revoked student approval. Seating and certificate allocation cleared.`;
       } else if (action === 'reject') {
         const reason = rejectReason || 'No reason provided';
         
@@ -130,10 +163,24 @@ export async function POST(req: Request) {
         const token = signMagicToken(student.email, student.index_no);
         const correctionUrl = `${origin}/?email=${encodeURIComponent(student.email)}&token=${token}`;
         try {
+          const tempRes = await client.query('SELECT subject, body FROM email_templates WHERE template_key = $1', ['rejection']);
+          const customTemplate = tempRes.rows[0];
+          let subject = 'Correction Required: Graduation Profile Update Alert';
+          let htmlContent = '';
+          if (customTemplate) {
+            subject = customTemplate.subject;
+            htmlContent = customTemplate.body
+              .replace(/\{\{student_name\}\}/g, student.name_with_initials)
+              .replace(/\{\{rejection_reason\}\}/g, reason)
+              .replace(/\{\{login_url\}\}/g, correctionUrl);
+          } else {
+            htmlContent = await getRejectionTemplate(student.name_with_initials, reason, correctionUrl);
+          }
+
           await sendEmail({
             to: [{ email: student.email, name: student.name_with_initials }],
-            subject: 'Correction Required: Graduation Profile Update Alert',
-            htmlContent: getRejectionTemplate(student.name_with_initials, reason, correctionUrl)
+            subject,
+            htmlContent
           });
         } catch (err: any) {
           console.error(`Failed to send rejection email to ${student.email}:`, err.message);

@@ -17,12 +17,17 @@ export async function GET() {
     }
 
     const data = await runAsStudent(payload.email, async (client) => {
+      const activeYearRes = await client.query(
+        "SELECT convocation_year FROM registration_windows WHERE is_active = TRUE LIMIT 1"
+      );
+      const activeYear = activeYearRes.rows[0]?.convocation_year || '2026';
+
       const res = await client.query(
         `SELECT s.*, d.code as degree_code, d.name_en as degree_name_en, d.type as degree_type, d.faculty as degree_faculty, d.degree_no as degree_number
          FROM students s
          LEFT JOIN degrees d ON s.degree_id = d.id
-         WHERE LOWER(s.email) = LOWER($1)`,
-        [payload.email]
+         WHERE LOWER(s.email) = LOWER($1) AND s.convocation_year = $2`,
+        [payload.email, activeYear]
       );
       return res.rows[0] || null;
     });
@@ -63,10 +68,15 @@ export async function PATCH(req: Request) {
     const body = await req.json();
 
     const result = await runAsStudent(payload.email, async (client) => {
+      const activeYearRes = await client.query(
+        "SELECT convocation_year FROM registration_windows WHERE is_active = TRUE LIMIT 1"
+      );
+      const activeYear = activeYearRes.rows[0]?.convocation_year || '2026';
+
       // 1. Get current status to check read-only locking
       const currentRes = await client.query(
-        'SELECT attendance_confirmed, attending_convocation, profile_photo_path, payment_slip_path FROM students WHERE LOWER(email) = LOWER($1)',
-        [payload.email]
+        'SELECT attendance_confirmed, attending_convocation, profile_photo_path, payment_slip_path FROM students WHERE LOWER(email) = LOWER($1) AND convocation_year = $2',
+        [payload.email, activeYear]
       );
       const student = currentRes.rows[0];
       if (!student) {
@@ -135,16 +145,26 @@ export async function PATCH(req: Request) {
         throw new Error('No valid field updates provided.');
       }
 
-      values.push(payload.email);
+      values.push(payload.email, activeYear);
       const query = `
         UPDATE students
         SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP
-        WHERE LOWER(email) = LOWER($${index})
-        RETURNING *
+        WHERE LOWER(email) = LOWER($${index}) AND convocation_year = $${index + 1}
+        RETURNING id
       `;
 
       const updateRes = await client.query(query, values);
-      return updateRes.rows[0];
+      const updatedId = updateRes.rows[0]?.id;
+
+      // Query the full joined data so the degree name and details are included!
+      const fullRes = await client.query(
+        `SELECT s.*, d.code as degree_code, d.name_en as degree_name_en, d.type as degree_type, d.faculty as degree_faculty, d.degree_no as degree_number
+         FROM students s
+         LEFT JOIN degrees d ON s.degree_id = d.id
+         WHERE s.id = $1`,
+        [updatedId]
+      );
+      return fullRes.rows[0];
     });
 
     return NextResponse.json({ success: true, data: result });
