@@ -43,7 +43,7 @@ export async function POST(req: Request) {
           class: classVal,
         } = row;
 
-        const magicToken = signMagicToken(email, index_no);
+        const magicToken = signMagicToken(email, index_no, activeYear);
         const magicLink = `${origin}/api/student/auth/magic-login?email=${encodeURIComponent(email.toLowerCase().trim())}&token=${encodeURIComponent(magicToken)}`;
 
         notifications.push({

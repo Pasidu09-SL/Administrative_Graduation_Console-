@@ -7,6 +7,7 @@ const SECRET = process.env.JWT_ACCESS_SECRET || 'university-graduation-system-se
 export interface AuthUser {
   email: string;
   index_no: string;
+  convocation_year?: string;
   magicTokenExp?: number;
 }
 
@@ -130,10 +131,11 @@ export async function getAdminSession(): Promise<AuthAdmin | null> {
   }
 }
 
-export function signMagicToken(email: string, index_no: string): string {
+export function signMagicToken(email: string, index_no: string, convocation_year?: string): string {
   const payload = {
     email: email.toLowerCase().trim(),
     index_no: index_no.trim(),
+    convocation_year: convocation_year ? convocation_year.trim() : undefined,
     exp: Date.now() + 30 * 24 * 60 * 60 * 1000 // 30 days expiry
   };
   const data = JSON.stringify(payload);
@@ -141,7 +143,7 @@ export function signMagicToken(email: string, index_no: string): string {
   return `${Buffer.from(data).toString('base64')}.${signature}`;
 }
 
-export function verifyMagicToken(token: string): { email: string; index_no: string; exp: number } | null {
+export function verifyMagicToken(token: string): { email: string; index_no: string; convocation_year?: string; exp: number } | null {
   try {
     const [dataBase64, signature] = token.split('.');
     if (!dataBase64 || !signature) return null;
@@ -150,7 +152,12 @@ export function verifyMagicToken(token: string): { email: string; index_no: stri
     if (signature !== expectedSignature) return null;
     const payload = JSON.parse(data);
     if (Date.now() > payload.exp) return null;
-    return { email: payload.email, index_no: payload.index_no, exp: payload.exp };
+    return {
+      email: payload.email,
+      index_no: payload.index_no,
+      convocation_year: payload.convocation_year,
+      exp: payload.exp
+    };
   } catch {
     return null;
   }

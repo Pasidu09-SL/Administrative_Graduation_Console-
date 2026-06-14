@@ -159,10 +159,10 @@ export async function POST(req: Request) {
       ) {
         studentsRes = await client.query(
           `
-          SELECT s.id 
+          SELECT s.id, s.attending_convocation 
           FROM students s
           JOIN degrees d ON s.degree_id = d.id
-          WHERE d.type = 'External' AND s.verification_status = 'Approved' AND s.attending_convocation = TRUE AND s.convocation_year = $1
+          WHERE d.type = 'External' AND s.verification_status = 'Approved' AND s.convocation_year = $1
           ORDER BY d.degree_no ASC, s.import_order ASC
         `,
           [activeYear],
@@ -171,10 +171,10 @@ export async function POST(req: Request) {
         const actualFaculty = targetGroup.replace(" (Internal)", "");
         studentsRes = await client.query(
           `
-          SELECT s.id 
+          SELECT s.id, s.attending_convocation 
           FROM students s
           JOIN degrees d ON s.degree_id = d.id
-          WHERE s.faculty = $1 AND (d.type = 'Internal' OR d.type IS NULL) AND s.verification_status = 'Approved' AND s.attending_convocation = TRUE AND s.convocation_year = $2
+          WHERE s.faculty = $1 AND (d.type = 'Internal' OR d.type IS NULL) AND s.verification_status = 'Approved' AND s.convocation_year = $2
           ORDER BY d.degree_no ASC, s.import_order ASC
         `,
           [actualFaculty, activeYear],
@@ -183,19 +183,19 @@ export async function POST(req: Request) {
         // Legacy fallback
         studentsRes = await client.query(
           `
-          SELECT s.id 
+          SELECT s.id, s.attending_convocation 
           FROM students s
           LEFT JOIN degrees d ON s.degree_id = d.id
-          WHERE s.faculty = $1 AND s.verification_status = 'Approved' AND s.attending_convocation = TRUE AND s.convocation_year = $2
+          WHERE s.faculty = $1 AND s.verification_status = 'Approved' AND s.convocation_year = $2
           ORDER BY d.degree_no ASC, s.import_order ASC
         `,
           [targetGroup, activeYear],
         );
       }
-      const studentIds = studentsRes.rows.map((r: any) => r.id);
-      if (studentIds.length === 0) {
+      const studentsList = studentsRes.rows;
+      if (studentsList.length === 0) {
         throw new Error(
-          `No approved candidates attending convocation found for group: ${targetGroup}`,
+          `No approved candidates found for group: ${targetGroup}`,
         );
       }
 
@@ -211,17 +211,23 @@ export async function POST(req: Request) {
         : 16041;
 
       // 6. Sequentially allocate seating and certificate numbers (using bulk UPDATE for performance)
-      if (studentIds.length > 0) {
+      if (studentsList.length > 0) {
         const valuesArr: any[] = [];
         const valueStrings: string[] = [];
         let pIndex = 1;
 
-        studentIds.forEach((id) => {
+        studentsList.forEach((student: any) => {
           const certNo = String(nextCertNo);
-          valuesArr.push(sessNum, nextSeat, certNo, id);
+          const isAttending = student.attending_convocation === true;
+          const seatVal = isAttending ? nextSeat : null;
+
+          valuesArr.push(sessNum, seatVal, certNo, student.id);
           valueStrings.push(`($${pIndex}::integer, $${pIndex + 1}::integer, $${pIndex + 2}::text, $${pIndex + 3}::uuid)`);
           pIndex += 4;
-          nextSeat++;
+
+          if (isAttending) {
+            nextSeat++;
+          }
           nextCertNo++;
         });
 
@@ -239,12 +245,13 @@ export async function POST(req: Request) {
         await client.query(bulkQuery, valuesArr);
       }
 
+      const startSeatVal = parseInt(maxSeatRes.rows[0].max_seat) + 1;
       return {
         faculty: targetGroup,
         sessionNumber: sessNum,
-        allocatedCount: studentIds.length,
-        startingSeat: parseInt(maxSeatRes.rows[0].max_seat) + 1,
-        endingSeat: nextSeat - 1,
+        allocatedCount: studentsList.length,
+        startingSeat: startSeatVal,
+        endingSeat: nextSeat > startSeatVal ? nextSeat - 1 : null,
       };
     });
 

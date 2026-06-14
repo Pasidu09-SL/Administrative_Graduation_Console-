@@ -48,9 +48,10 @@ export async function POST(req: Request) {
         "SELECT convocation_year FROM registration_windows WHERE is_active = TRUE LIMIT 1"
       );
       const activeYear = activeYearRes.rows[0]?.convocation_year || '2026';
+      const targetYear = payload.convocation_year || activeYear;
       const res = await client.query(
-        'SELECT email, index_no, nic_no FROM students WHERE LOWER(email) = LOWER($1) AND index_no = $2 AND nic_no = $3 AND convocation_year = $4',
-        [email.trim(), index_no.trim(), nic_no.trim(), activeYear]
+        'SELECT email, index_no, nic_no, convocation_year FROM students WHERE LOWER(email) = LOWER($1) AND index_no = $2 AND nic_no = $3 AND convocation_year = $4',
+        [email.trim(), index_no.trim(), nic_no.trim(), targetYear]
       );
       return res.rows[0] || null;
     });
@@ -63,6 +64,7 @@ export async function POST(req: Request) {
     const sessionToken = signToken({
       email: student.email.toLowerCase().trim(),
       index_no: student.index_no.trim(),
+      convocation_year: student.convocation_year,
       magicTokenExp: payload.exp
     });
 

@@ -21,13 +21,14 @@ export async function GET() {
         "SELECT convocation_year FROM registration_windows WHERE is_active = TRUE LIMIT 1"
       );
       const activeYear = activeYearRes.rows[0]?.convocation_year || '2026';
+      const targetYear = payload.convocation_year || activeYear;
 
       const res = await client.query(
         `SELECT s.*, d.code as degree_code, d.name_en as degree_name_en, d.type as degree_type, d.faculty as degree_faculty, d.degree_no as degree_number
          FROM students s
          LEFT JOIN degrees d ON s.degree_id = d.id
          WHERE LOWER(s.email) = LOWER($1) AND s.convocation_year = $2`,
-        [payload.email, activeYear]
+        [payload.email, targetYear]
       );
       return res.rows[0] || null;
     });
@@ -64,9 +65,10 @@ export async function PATCH(req: Request) {
           "SELECT convocation_year FROM registration_windows WHERE is_active = TRUE LIMIT 1"
         );
         const activeYear = activeYearRes.rows[0]?.convocation_year || '2026';
+        const targetYear = payload.convocation_year || activeYear;
         const res = await client.query(
           'SELECT timeline_bypass FROM students WHERE LOWER(email) = LOWER($1) AND convocation_year = $2',
-          [payload.email, activeYear]
+          [payload.email, targetYear]
         );
         return res.rows[0]?.timeline_bypass === true;
       });
@@ -86,11 +88,12 @@ export async function PATCH(req: Request) {
         "SELECT convocation_year FROM registration_windows WHERE is_active = TRUE LIMIT 1"
       );
       const activeYear = activeYearRes.rows[0]?.convocation_year || '2026';
+      const targetYear = payload.convocation_year || activeYear;
 
       // 1. Get current status to check read-only locking
       const currentRes = await client.query(
         'SELECT attendance_confirmed, attending_convocation, profile_photo_path, payment_slip_path FROM students WHERE LOWER(email) = LOWER($1) AND convocation_year = $2',
-        [payload.email, activeYear]
+        [payload.email, targetYear]
       );
       const student = currentRes.rows[0];
       if (!student) {
@@ -159,7 +162,7 @@ export async function PATCH(req: Request) {
         throw new Error('No valid field updates provided.');
       }
 
-      values.push(payload.email, activeYear);
+      values.push(payload.email, targetYear);
       const query = `
         UPDATE students
         SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP

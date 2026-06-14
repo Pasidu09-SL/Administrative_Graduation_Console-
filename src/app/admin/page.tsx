@@ -104,6 +104,37 @@ const unwrapPlaceholdersInHtml = (htmlStr: string) => {
   return html;
 };
 
+const DEFAULT_LAYOUT = {
+  studentNameY: 490,
+  studentNameFontSize: 26,
+  degreeNameY: 405,
+  degreeNameFontSize: 20,
+  dateDigitalText: "15th January 2023",
+  dateDigitalY: 350,
+  dateVerbalText: "Twenty Seventh Day of July in the Year Two Thousand Twenty Three",
+  dateVerbalY: 245,
+
+  titleY: 500,
+  preambleY: 482,
+  preambleSiInternal: "මෙම විශ්වවිද්‍යාලයේ අභ්‍යන්තර අපේක්ෂකයෙකු ලෙස\nනියමිත අධ්‍යයන පාඨමාලා සහ පරීක්ෂණ සාර්ථක\nලෙස නිම කිරීමෙන් පසු මෙහි පසු පිටේ නම\nසඳහන් අය වෙත",
+  preambleSiExternal: "මෙම විශ්වවිද්‍යාලයේ බාහිර අපේක්ෂකයෙකු ලෙස\nනියමිත අධ්‍යයන පාඨමාලා සහ පරීක්ෂණ සාර්ථක\nලෙස නිම කිරීමෙන් පසු මෙහි පසු පිටේ නම\nසඳහන් අය වෙත",
+  preambleTaInternal: "இப்பல்கலைக்கழகத்தில் குறிப்பிட்ட உள்வாரி கற்கை\nநெறிகளையும் பரீட்சைகளையும் வெற்றிகரமாக\nநிறைவு செய்ததன் பின்னர், இச்சான்றிதழின்\nமறுபக்கத்தில் பெயர் குறிப்பிடப்பட்டுள்ளவருக்கு",
+  preambleTaExternal: "இப்பல்கலைக்கழகத்தில் குறிப்பிட்ட வெளிவாரி கற்கை\nநெறிகளையும் பரீட்சைகளையும் வெற்றிகரமாக\nநிறைவு செய்ததன் பின்னர், இச்சான்றிதழின்\nமறுபக்கத்தில் பெயர் குறிப்பிடப்பட்டுள்ளவருக்கு",
+  suffixSi: "පිරිනමන ලද බව මෙයින් සහතික කරමු.",
+  suffixTa: "வழங்கப்பட்டதென இத்தால்\nஉறுதிப்படுத்துகின்றோம்.",
+  dateSiLine1: "වලංගු වීමේ දිනය: 15/01/2023",
+  dateSiLine2: "උපාධි ප්‍රදානෝත්සවය: 2023 ජූලි මස 27",
+  dateTaLine1: "செல்லுபடியாகும் திகதி: 15/01/2023",
+  dateTaLine2: "பட்டமளிப்பு விழா: 27 ஜூலை 2023",
+  registrarName: "එස්.සී. හේරත් / எஸ்.சி.ஹேரத்",
+  registrarTitle: "ලේඛකාධිකාරි / பதிவாளர்",
+  vcName: "වෛද්‍ය පී.එච්.ජේ. පුෂ්පකුමාර / வைத்தியர் பி.எச்.ஜி.ஜே. புஷ்பகுமார",
+  vcTitle: "වැඩ බලන උපකුලපති / பதில் உபவேந்தர்",
+  registrarX: 99.213,
+  vcX: 496.063,
+  signatureY: 118,
+};
+
 export default function AdminDashboard() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<
@@ -120,6 +151,7 @@ export default function AdminDashboard() {
     | "audit_logs"
     | "db_maintenance"
     | "dispatch"
+    | "cert_layout"
   >("degrees");
   const [expandedSection, setExpandedSection] = useState<"admin" | "general">(
     "admin",
@@ -200,6 +232,11 @@ export default function AdminDashboard() {
   const [closeDate, setCloseDate] = useState("");
   const [isManuallyClosed, setIsManuallyClosed] = useState(false);
   const [timelineConfig, setTimelineConfig] = useState<any>(null);
+
+  // 3.1. CERTIFICATE LAYOUT MANAGER STATE
+  const [layoutConfig, setLayoutConfig] = useState<any>(null);
+  const [layoutLoading, setLayoutLoading] = useState(false);
+  const [layoutSide, setLayoutSide] = useState<"front" | "back">("front");
 
   // 4. AUDIT STATE
   const [students, setStudents] = useState<any[]>([]);
@@ -454,6 +491,88 @@ export default function AdminDashboard() {
     }
   };
 
+  const loadLayoutConfig = async (year: string) => {
+    setLayoutLoading(true);
+    try {
+      const res = await fetch(`/api/admin/certificate-layout?convocation_year=${year}`);
+      const json = await res.json();
+      if (res.ok && json.success) {
+        setLayoutConfig(json.data);
+      } else {
+        setErrorMsg(json.error || "Failed to load certificate layout settings.");
+      }
+    } catch (err) {
+      setErrorMsg("Failed to connect to certificate layout configuration API.");
+    } finally {
+      setLayoutLoading(false);
+    }
+  };
+
+  const updateLayoutField = (key: string, value: any) => {
+    setLayoutConfig((prev: any) => ({
+      ...prev,
+      [key]: value,
+    }));
+  };
+
+  const handleSaveLayoutConfig = async () => {
+    if (!layoutConfig) return;
+    setLoading(true);
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    try {
+      const res = await fetch("/api/admin/certificate-layout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          convocation_year: activeConvocationYear,
+          layout_data: layoutConfig,
+        }),
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        setSuccessMsg(`Certificate layout settings for ${activeConvocationYear} saved successfully.`);
+        setLayoutConfig(json.data);
+      } else {
+        setErrorMsg(json.error || "Failed to save certificate layout configuration.");
+      }
+    } catch (err) {
+      setErrorMsg("Network error saving layout configuration.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResetLayoutConfig = async () => {
+    if (!confirm(`Are you sure you want to reset the layout coordinates and texts for ${activeConvocationYear} to system defaults?`)) {
+      return;
+    }
+    setLoading(true);
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    try {
+      const res = await fetch("/api/admin/certificate-layout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          convocation_year: activeConvocationYear,
+          layout_data: {},
+        }),
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        setSuccessMsg("Certificate layout coordinates reset to system defaults.");
+        setLayoutConfig(json.data);
+      } else {
+        setErrorMsg(json.error || "Failed to reset layout coordinates.");
+      }
+    } catch (err) {
+      setErrorMsg("Network error resetting layout configuration.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const loadStudents = async () => {
     const query = new URLSearchParams();
     if (filterFaculty) query.append("faculty", filterFaculty);
@@ -661,6 +780,13 @@ export default function AdminDashboard() {
   useEffect(() => {
     checkSession();
   }, []);
+
+  // Fetch certificate layout config when tab or year changes
+  useEffect(() => {
+    if (staffUser && activeTab === "cert_layout" && activeConvocationYear) {
+      loadLayoutConfig(activeConvocationYear);
+    }
+  }, [staffUser, activeTab, activeConvocationYear]);
 
   // Fetch dashboard data if authenticated
   useEffect(() => {
@@ -2666,6 +2792,7 @@ export default function AdminDashboard() {
                         { id: "audit", label: "Split Audit Center" },
                         { id: "seating", label: "Session and Seating" },
                         { id: "print", label: "Certificate Generation" },
+                        { id: "cert_layout", label: "Certificate Layout" },
                         { id: "registry", label: "Student Registry" },
                       ].map((tab) => (
                         <button
@@ -3044,7 +3171,7 @@ export default function AdminDashboard() {
                   {selectedIngestStudents.length > 0 && (
                     <Button
                       onClick={handleBulkDeleteStudents}
-                      className="bg-red-650 hover:bg-red-700 text-white font-bold h-9 text-xs rounded-lg px-4 shadow flex items-center gap-1.5"
+                      className="bg-red-600 hover:bg-red-700 text-white font-bold h-9 text-xs rounded-lg px-4 shadow flex items-center gap-1.5"
                     >
                       <Trash2 className="h-4 w-4" />
                       Bulk Delete Selected ({selectedIngestStudents.length})
@@ -3960,9 +4087,12 @@ export default function AdminDashboard() {
                   {/* Left Column: Student List Selection */}
                   <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-2xl lg:col-span-1 max-h-[500px] overflow-y-auto shadow-sm">
                     <CardHeader className="pb-3 border-b border-slate-100 dark:border-slate-900">
-                      <CardTitle className="text-sm font-bold text-slate-950 dark:text-white uppercase tracking-wider">
+                      <CardTitle className="text-sm font-bold text-slate-950 dark:text-white tracking-wider">
                         Candidate Registry
                       </CardTitle>
+                      <CardDescription className="text-[10px] text-slate-500 mt-0.5">
+                            List of all students who recieved registration emails.
+                          </CardDescription>
                     </CardHeader>
                     <CardContent className="p-2 space-y-1">
                       {students.map((st) => (
@@ -4038,7 +4168,7 @@ export default function AdminDashboard() {
                     <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-2xl lg:col-span-2 shadow-sm">
                       <CardHeader className="border-b border-slate-100 dark:border-slate-900 flex flex-row items-center justify-between pb-4">
                         <div>
-                          <CardTitle className="text-sm font-bold text-slate-950 dark:text-white uppercase tracking-wider">
+                          <CardTitle className="text-sm font-bold text-slate-950 dark:text-white tracking-wider">
                             Split-Screen Audit Console
                           </CardTitle>
                           <CardDescription className="text-[10px] text-slate-500 mt-0.5">
@@ -4740,6 +4870,656 @@ export default function AdminDashboard() {
                       </div>
                     )}
                   </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {/* 6.1. CERTIFICATE LAYOUT MANAGER WORKSPACE */}
+          {activeTab === "cert_layout" && (
+            <div className="space-y-6">
+              <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-2xl shadow-sm">
+                <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 gap-4">
+                  <div>
+                    <CardTitle className="text-base font-bold text-slate-950 dark:text-white">
+                      Certificate Layout Manager
+                    </CardTitle>
+                    <CardDescription className="text-[11px] text-slate-500">
+                      Configure text alignments, titles, preambles, and coordinate placements for printed certificates.
+                    </CardDescription>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs font-bold text-slate-400">
+                      Cohort: {activeConvocationYear}
+                    </span>
+                    <Button
+                      onClick={handleResetLayoutConfig}
+                      variant="outline"
+                      className="border-slate-200 dark:border-slate-800 text-xs text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 h-9 rounded-xl font-bold"
+                    >
+                      Reset to Defaults
+                    </Button>
+                    <Button
+                      onClick={handleSaveLayoutConfig}
+                      className="bg-blue-600 hover:bg-blue-700 text-white text-xs h-9 rounded-xl font-bold shadow-lg shadow-blue-500/10"
+                    >
+                      Save Layout Config
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {layoutLoading || !layoutConfig ? (
+                    <div className="flex flex-col items-center justify-center py-20 gap-3">
+                      <Loader2 className="h-8 w-8 text-blue-500 animate-spin" />
+                      <span className="text-xs font-bold text-slate-500">Loading layout configuration...</span>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                      {/* Left Column: Form Controls */}
+                      <div className="lg:col-span-5 space-y-6 max-h-[700px] overflow-y-auto pr-2">
+                        {/* Side Switcher */}
+                        <div className="bg-slate-100/50 dark:bg-slate-950/40 p-1 rounded-xl border border-slate-200 dark:border-slate-900 flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setLayoutSide("front")}
+                            className={`flex-1 py-2 text-xs font-extrabold rounded-lg transition-all ${
+                              layoutSide === "front"
+                                ? "bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm"
+                                : "text-slate-500 dark:text-slate-400 hover:text-slate-850 dark:hover:text-slate-200"
+                            }`}
+                          >
+                            Side 1 (Front - English)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setLayoutSide("back")}
+                            className={`flex-1 py-2 text-xs font-extrabold rounded-lg transition-all ${
+                              layoutSide === "back"
+                                ? "bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm"
+                                : "text-slate-500 dark:text-slate-400 hover:text-slate-850 dark:hover:text-slate-200"
+                            }`}
+                          >
+                            Side 2 (Back - Sinhala & Tamil)
+                          </button>
+                        </div>
+
+                        {/* Front Controls */}
+                        {layoutSide === "front" && (
+                          <div className="space-y-5">
+                            <h3 className="text-xs font-black uppercase tracking-wider text-slate-400">Front Placement & Scale</h3>
+                            
+                            {/* Student Name position */}
+                            <div className="space-y-2">
+                              <div className="flex justify-between text-xs font-bold">
+                                <Label className="text-slate-700 dark:text-slate-350">Student Name Y-Coordinate</Label>
+                                <span className="text-blue-500">{layoutConfig.studentNameY} pt</span>
+                              </div>
+                              <input
+                                type="range"
+                                min="300"
+                                max="600"
+                                step="1"
+                                value={layoutConfig.studentNameY || 490}
+                                onChange={(e) => updateLayoutField("studentNameY", Number(e.target.value))}
+                                className="w-full h-1.5 bg-slate-200 dark:bg-slate-850 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                              />
+                            </div>
+
+                            <div className="space-y-2">
+                              <div className="flex justify-between text-xs font-bold">
+                                <Label className="text-slate-700 dark:text-slate-350">Student Name Font Size</Label>
+                                <span className="text-blue-500">{layoutConfig.studentNameFontSize} pt</span>
+                              </div>
+                              <input
+                                type="range"
+                                min="16"
+                                max="36"
+                                step="0.5"
+                                value={layoutConfig.studentNameFontSize || 26}
+                                onChange={(e) => updateLayoutField("studentNameFontSize", Number(e.target.value))}
+                                className="w-full h-1.5 bg-slate-200 dark:bg-slate-850 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                              />
+                            </div>
+
+                            {/* Degree Name position */}
+                            <div className="space-y-2">
+                              <div className="flex justify-between text-xs font-bold">
+                                <Label className="text-slate-700 dark:text-slate-350">Degree Name Y-Coordinate</Label>
+                                <span className="text-blue-500">{layoutConfig.degreeNameY} pt</span>
+                              </div>
+                              <input
+                                type="range"
+                                min="300"
+                                max="500"
+                                step="1"
+                                value={layoutConfig.degreeNameY || 405}
+                                onChange={(e) => updateLayoutField("degreeNameY", Number(e.target.value))}
+                                className="w-full h-1.5 bg-slate-200 dark:bg-slate-850 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                              />
+                            </div>
+
+                            <div className="space-y-2">
+                              <div className="flex justify-between text-xs font-bold">
+                                <Label className="text-slate-700 dark:text-slate-350">Degree Name Font Size</Label>
+                                <span className="text-blue-500">{layoutConfig.degreeNameFontSize} pt</span>
+                              </div>
+                              <input
+                                type="range"
+                                min="12"
+                                max="28"
+                                step="1"
+                                value={layoutConfig.degreeNameFontSize || 20}
+                                onChange={(e) => updateLayoutField("degreeNameFontSize", Number(e.target.value))}
+                                className="w-full h-1.5 bg-slate-200 dark:bg-slate-850 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                              />
+                            </div>
+
+                            {/* Digital Date */}
+                            <div className="space-y-2">
+                              <Label className="text-xs font-bold text-slate-750">Conferment Date (Digital Format)</Label>
+                              <Input
+                                type="text"
+                                value={layoutConfig.dateDigitalText || ""}
+                                onChange={(e) => updateLayoutField("dateDigitalText", e.target.value)}
+                                className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-xs rounded-xl"
+                              />
+                            </div>
+
+                            <div className="space-y-2">
+                              <div className="flex justify-between text-xs font-bold">
+                                <Label className="text-slate-700 dark:text-slate-350">Digital Date Y-Coordinate</Label>
+                                <span className="text-blue-500">{layoutConfig.dateDigitalY} pt</span>
+                              </div>
+                              <input
+                                type="range"
+                                min="280"
+                                max="400"
+                                step="1"
+                                value={layoutConfig.dateDigitalY || 350}
+                                onChange={(e) => updateLayoutField("dateDigitalY", Number(e.target.value))}
+                                className="w-full h-1.5 bg-slate-200 dark:bg-slate-850 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                              />
+                            </div>
+
+                            {/* Verbal Date */}
+                            <div className="space-y-2">
+                              <Label className="text-xs font-bold text-slate-750">Conferment Date (Verbal / Words)</Label>
+                              <Input
+                                type="text"
+                                value={layoutConfig.dateVerbalText || ""}
+                                onChange={(e) => updateLayoutField("dateVerbalText", e.target.value)}
+                                className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-xs rounded-xl"
+                              />
+                            </div>
+
+                            <div className="space-y-2">
+                              <div className="flex justify-between text-xs font-bold">
+                                <Label className="text-slate-700 dark:text-slate-350">Verbal Date Y-Coordinate</Label>
+                                <span className="text-blue-500">{layoutConfig.dateVerbalY} pt</span>
+                              </div>
+                              <input
+                                type="range"
+                                min="180"
+                                max="300"
+                                step="1"
+                                value={layoutConfig.dateVerbalY || 245}
+                                onChange={(e) => updateLayoutField("dateVerbalY", Number(e.target.value))}
+                                className="w-full h-1.5 bg-slate-200 dark:bg-slate-850 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Back Controls */}
+                        {layoutSide === "back" && (
+                          <div className="space-y-5">
+                            <h3 className="text-xs font-black uppercase tracking-wider text-slate-400">Back Placements & Translations</h3>
+                            
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="space-y-2">
+                                <div className="flex justify-between text-xs font-bold">
+                                  <Label className="text-slate-700">Title Y-Pos</Label>
+                                  <span className="text-blue-500">{layoutConfig.titleY} pt</span>
+                                </div>
+                                <input
+                                  type="range"
+                                  min="450"
+                                  max="550"
+                                  step="1"
+                                  value={layoutConfig.titleY || 500}
+                                  onChange={(e) => updateLayoutField("titleY", Number(e.target.value))}
+                                  className="w-full h-1.5 bg-slate-200 dark:bg-slate-850 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                                />
+                              </div>
+
+                              <div className="space-y-2">
+                                <div className="flex justify-between text-xs font-bold">
+                                  <Label className="text-slate-700">Preamble Y-Pos</Label>
+                                  <span className="text-blue-500">{layoutConfig.preambleY} pt</span>
+                                </div>
+                                <input
+                                  type="range"
+                                  min="400"
+                                  max="500"
+                                  step="1"
+                                  value={layoutConfig.preambleY || 482}
+                                  onChange={(e) => updateLayoutField("preambleY", Number(e.target.value))}
+                                  className="w-full h-1.5 bg-slate-200 dark:bg-slate-850 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                                />
+                              </div>
+                            </div>
+
+                            {/* Preambles */}
+                            <div className="space-y-3 p-3 bg-slate-50 dark:bg-slate-950/20 border border-slate-200 dark:border-slate-900 rounded-2xl">
+                              <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400">Sinhala Statutory Preamble</h4>
+                              <div className="space-y-2">
+                                <Label className="text-[10px] font-bold text-slate-500">Internal Candidate Preamble</Label>
+                                <textarea
+                                  rows={3}
+                                  value={layoutConfig.preambleSiInternal || ""}
+                                  onChange={(e) => updateLayoutField("preambleSiInternal", e.target.value)}
+                                  className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs rounded-xl p-2.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label className="text-[10px] font-bold text-slate-500">External Candidate Preamble</Label>
+                                <textarea
+                                  rows={3}
+                                  value={layoutConfig.preambleSiExternal || ""}
+                                  onChange={(e) => updateLayoutField("preambleSiExternal", e.target.value)}
+                                  className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs rounded-xl p-2.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label className="text-[10px] font-bold text-slate-500">Sinhala Suffix</Label>
+                                <Input
+                                  type="text"
+                                  value={layoutConfig.suffixSi || ""}
+                                  onChange={(e) => updateLayoutField("suffixSi", e.target.value)}
+                                  className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-xs rounded-xl"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="space-y-3 p-3 bg-slate-50 dark:bg-slate-950/20 border border-slate-200 dark:border-slate-900 rounded-2xl">
+                              <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400">Tamil Statutory Preamble</h4>
+                              <div className="space-y-2">
+                                <Label className="text-[10px] font-bold text-slate-500">Internal Candidate Preamble</Label>
+                                <textarea
+                                  rows={3}
+                                  value={layoutConfig.preambleTaInternal || ""}
+                                  onChange={(e) => updateLayoutField("preambleTaInternal", e.target.value)}
+                                  className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs rounded-xl p-2.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label className="text-[10px] font-bold text-slate-500">External Candidate Preamble</Label>
+                                <textarea
+                                  rows={3}
+                                  value={layoutConfig.preambleTaExternal || ""}
+                                  onChange={(e) => updateLayoutField("preambleTaExternal", e.target.value)}
+                                  className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs rounded-xl p-2.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label className="text-[10px] font-bold text-slate-500">Tamil Suffix</Label>
+                                <textarea
+                                  rows={2}
+                                  value={layoutConfig.suffixTa || ""}
+                                  onChange={(e) => updateLayoutField("suffixTa", e.target.value)}
+                                  className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs rounded-xl p-2.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                />
+                              </div>
+                            </div>
+
+                            {/* Back Page Dates */}
+                            <div className="space-y-3 p-3 bg-slate-50 dark:bg-slate-950/20 border border-slate-200 dark:border-slate-900 rounded-2xl">
+                              <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400">Bilateral Dates</h4>
+                              <div className="grid grid-cols-2 gap-3">
+                                <div className="space-y-1">
+                                  <Label className="text-[9px] font-bold">Sinhala Date Line 1</Label>
+                                  <Input
+                                    type="text"
+                                    value={layoutConfig.dateSiLine1 || ""}
+                                    onChange={(e) => updateLayoutField("dateSiLine1", e.target.value)}
+                                    className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-[11px] h-8 rounded-lg"
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-[9px] font-bold">Sinhala Date Line 2</Label>
+                                  <Input
+                                    type="text"
+                                    value={layoutConfig.dateSiLine2 || ""}
+                                    onChange={(e) => updateLayoutField("dateSiLine2", e.target.value)}
+                                    className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-[11px] h-8 rounded-lg"
+                                  />
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-2 gap-3 mt-2">
+                                <div className="space-y-1">
+                                  <Label className="text-[9px] font-bold">Tamil Date Line 1</Label>
+                                  <Input
+                                    type="text"
+                                    value={layoutConfig.dateTaLine1 || ""}
+                                    onChange={(e) => updateLayoutField("dateTaLine1", e.target.value)}
+                                    className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-[11px] h-8 rounded-lg"
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-[9px] font-bold">Tamil Date Line 2</Label>
+                                  <Input
+                                    type="text"
+                                    value={layoutConfig.dateTaLine2 || ""}
+                                    onChange={(e) => updateLayoutField("dateTaLine2", e.target.value)}
+                                    className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-[11px] h-8 rounded-lg"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Signatures */}
+                            <div className="space-y-3 p-3 bg-slate-50 dark:bg-slate-950/20 border border-slate-200 dark:border-slate-900 rounded-2xl">
+                              <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400">Signatory Details</h4>
+                              
+                              <div className="space-y-2">
+                                <Label className="text-[10px] font-bold">Registrar Name</Label>
+                                <Input
+                                  type="text"
+                                  value={layoutConfig.registrarName || ""}
+                                  onChange={(e) => updateLayoutField("registrarName", e.target.value)}
+                                  className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-xs rounded-xl"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label className="text-[10px] font-bold">Registrar Title</Label>
+                                <Input
+                                  type="text"
+                                  value={layoutConfig.registrarTitle || ""}
+                                  onChange={(e) => updateLayoutField("registrarTitle", e.target.value)}
+                                  className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-xs rounded-xl"
+                                />
+                              </div>
+
+                              <div className="space-y-2">
+                                <Label className="text-[10px] font-bold">Vice Chancellor Name</Label>
+                                <Input
+                                  type="text"
+                                  value={layoutConfig.vcName || ""}
+                                  onChange={(e) => updateLayoutField("vcName", e.target.value)}
+                                  className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-xs rounded-xl"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label className="text-[10px] font-bold">Vice Chancellor Title</Label>
+                                <Input
+                                  type="text"
+                                  value={layoutConfig.vcTitle || ""}
+                                  onChange={(e) => updateLayoutField("vcTitle", e.target.value)}
+                                  className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-xs rounded-xl"
+                                />
+                              </div>
+
+                              <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-200 dark:border-slate-900">
+                                <div className="space-y-1">
+                                  <Label className="text-[9px] font-bold">Registrar X</Label>
+                                  <Input
+                                    type="number"
+                                    value={layoutConfig.registrarX || 99}
+                                    onChange={(e) => updateLayoutField("registrarX", Number(e.target.value))}
+                                    className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-xs h-8 rounded-lg"
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-[9px] font-bold">VC X</Label>
+                                  <Input
+                                    type="number"
+                                    value={layoutConfig.vcX || 496}
+                                    onChange={(e) => updateLayoutField("vcX", Number(e.target.value))}
+                                    className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-xs h-8 rounded-lg"
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-[9px] font-bold">Sign Y</Label>
+                                  <Input
+                                    type="number"
+                                    value={layoutConfig.signatureY || 118}
+                                    onChange={(e) => updateLayoutField("signatureY", Number(e.target.value))}
+                                    className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-xs h-8 rounded-lg"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Right Column: Visual Preview Canvas */}
+                      <div className="lg:col-span-7 flex flex-col items-center justify-start bg-slate-100/30 dark:bg-slate-950/20 border border-slate-250 dark:border-slate-900 rounded-3xl p-6 relative min-h-[660px]">
+                        <span className="absolute top-4 left-4 bg-slate-900/60 text-white dark:bg-white/10 dark:text-slate-350 text-[10px] font-black uppercase px-2.5 py-1 rounded-md tracking-wider">
+                          Interactive Live Canvas
+                        </span>
+
+                        {layoutSide === "front" ? (
+                          /* Front side live layout representation */
+                          <div 
+                            className="w-[420px] h-[594px] bg-[#fefdfa] dark:bg-[#FAF9F5] border-8 border-double border-[#8b7355] rounded-xl shadow-2xl relative select-none font-serif text-[#1e293b] overflow-hidden"
+                            style={{ backgroundImage: "radial-gradient(rgba(139,115,85,0.03) 1px, transparent 0)", backgroundSize: "8px 8px" }}
+                          >
+                            {/* Inner border line */}
+                            <div className="absolute inset-1 border border-[#8b7355]/20 pointer-events-none" />
+
+                            {/* Crest logo representation */}
+                            <div className="absolute top-[8%] left-1/2 -translate-x-1/2 w-14 h-14 bg-slate-100 dark:bg-slate-200/80 rounded-full border border-dashed border-[#8b7355]/40 flex items-center justify-center text-[10px] text-slate-400 font-bold">
+                              CREST
+                            </div>
+
+                            {/* University Title */}
+                            <div className="absolute top-[21%] left-0 w-full text-center text-[14px] font-bold uppercase tracking-widest text-[#8b7355]">
+                              Rajarata University of Sri Lanka
+                            </div>
+
+                            {/* Preamble description */}
+                            <div className="absolute top-[28%] left-10 right-10 text-center text-[8px] italic leading-normal text-slate-500 max-h-12 overflow-hidden">
+                              Having successfully completed the prescribed courses of study and the examinations of this university as an internal candidate...
+                            </div>
+
+                            {/* Bridge text */}
+                            <div className="absolute top-[37%] left-0 w-full text-center text-[8px] text-slate-400">
+                              was admitted to the degree of
+                            </div>
+
+                            {/* Student Name dynamic position */}
+                            <div 
+                              className="absolute left-10 right-10 text-center font-bold text-[#1e3a8a] truncate"
+                              style={{ 
+                                top: `${((841.89 - (layoutConfig.studentNameY || 490)) / 841.89) * 100}%`,
+                                fontSize: `${(layoutConfig.studentNameFontSize || 26) * 0.55}px`,
+                                lineHeight: "1.1"
+                              }}
+                            >
+                              KUMARA A.B.C.D.E.F.
+                            </div>
+
+                            {/* Degree Name dynamic position */}
+                            <div 
+                              className="absolute left-10 right-10 text-center font-bold text-[#8b7355]"
+                              style={{ 
+                                top: `${((841.89 - (layoutConfig.degreeNameY || 405)) / 841.89) * 100}%`,
+                                fontSize: `${(layoutConfig.degreeNameFontSize || 20) * 0.55}px`,
+                                lineHeight: "1.1"
+                              }}
+                            >
+                              BACHELOR OF SCIENCE IN INFORMATION TECHNOLOGY
+                            </div>
+
+                            {/* Static and details bridge */}
+                            <div 
+                              className="absolute left-0 w-full text-center text-[7px] text-slate-400 uppercase tracking-widest"
+                              style={{ top: `${((841.89 - 380) / 841.89) * 100}%` }}
+                            >
+                              and was conferred this degree at the convocation
+                            </div>
+
+                            {/* Dynamic Digital Date */}
+                            <div 
+                              className="absolute left-0 w-full text-center text-[9px] italic text-slate-600"
+                              style={{ top: `${((841.89 - (layoutConfig.dateDigitalY || 350)) / 841.89) * 100}%` }}
+                            >
+                              on {layoutConfig.dateDigitalText || "15th January 2023"}
+                            </div>
+
+                            {/* Dynamic Verbal Date */}
+                            <div 
+                              className="absolute left-10 right-10 text-center text-[8px] italic text-slate-500 leading-tight"
+                              style={{ top: `${((841.89 - (layoutConfig.dateVerbalY || 245)) / 841.89) * 100}%` }}
+                            >
+                              held on {layoutConfig.dateVerbalText || "Twenty Seventh Day of July in the Year Two Thousand Twenty Three"}
+                            </div>
+
+                            {/* Signatures representations */}
+                            <div 
+                              className="absolute w-full px-8 flex justify-between"
+                              style={{ top: `${((841.89 - 140) / 841.89) * 100}%` }}
+                            >
+                              <div className="text-center w-28 border-t border-slate-300 pt-1">
+                                <span className="text-[8px] block font-sans text-slate-400">Registrar Signature</span>
+                                <span className="text-[9px] font-sans font-bold text-slate-600 block mt-0.5">Registrar</span>
+                              </div>
+                              <div className="text-center w-28 border-t border-slate-300 pt-1">
+                                <span className="text-[8px] block font-sans text-slate-400">VC Signature</span>
+                                <span className="text-[9px] font-sans font-bold text-slate-600 block mt-0.5">Vice Chancellor</span>
+                              </div>
+                            </div>
+
+                            {/* Seal */}
+                            <div 
+                              className="absolute left-1/2 -translate-x-1/2 w-14 h-14 rounded-full border-2 border-red-500/25 flex items-center justify-center text-[8px] font-black tracking-widest text-red-500/30"
+                              style={{ top: `${((841.89 - 170) / 841.89) * 100}%` }}
+                            >
+                              SEAL
+                            </div>
+                          </div>
+                        ) : (
+                          /* Back side live layout representation (bilateral translations) */
+                          <div 
+                            className="w-[420px] h-[594px] bg-[#fefdfa] dark:bg-[#FAF9F5] border-8 border-double border-[#8b7355] rounded-xl shadow-2xl relative select-none font-serif text-[#1e293b] overflow-hidden"
+                            style={{ backgroundImage: "radial-gradient(rgba(139,115,85,0.03) 1px, transparent 0)", backgroundSize: "8px 8px" }}
+                          >
+                            {/* Inner border */}
+                            <div className="absolute inset-1 border border-[#8b7355]/20 pointer-events-none" />
+
+                            {/* Certificate metadata */}
+                            <div className="absolute top-[4%] right-[8%] text-[7px] text-slate-400 text-right font-sans">
+                              Certificate # 001542
+                            </div>
+
+                            {/* Logo */}
+                            <div className="absolute top-[5%] left-1/2 -translate-x-1/2 w-9 h-9 bg-slate-100 rounded-full border border-slate-200 flex items-center justify-center text-[7px] text-slate-400 font-bold">
+                              Logo
+                            </div>
+                            <div className="absolute top-[12%] left-0 w-full text-center text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                              Rajarata University of Sri Lanka
+                            </div>
+
+                            {/* Mock Grading Scheme Table */}
+                            <div className="absolute top-[16%] left-6 right-6 border border-slate-200 bg-slate-50 text-[6px] font-sans p-1.5 rounded-lg">
+                              <div className="grid grid-cols-4 font-bold border-b border-slate-350 pb-1 mb-1 text-slate-500">
+                                <span>Grading</span>
+                                <span>Regulation</span>
+                                <span>Relevance</span>
+                                <span>Status</span>
+                              </div>
+                              <div className="grid grid-cols-4 text-slate-400 space-y-0.5">
+                                <span>First Class</span>
+                                <span>GPA &gt;= 3.70</span>
+                                <span>Excellent</span>
+                                <span>Awarded</span>
+                              </div>
+                            </div>
+
+                            {/* Bilateral columns titles */}
+                            <div 
+                              className="absolute w-full px-6 grid grid-cols-2 gap-4"
+                              style={{ top: `${((841.89 - (layoutConfig.titleY || 500)) / 841.89) * 100}%` }}
+                            >
+                              <div className="text-center font-bold text-[9px] text-[#1e293b] truncate">
+                                {layoutConfig.titleSi || "\u0dc1\u0dca\u200d\u0dbb\u0dd3 \u0dbd\u0d82\u0d9a\u0dcf \u0dbb\u0da2\u0dbb\u0dcf\u0da2 \u0dc0\u0dd2\u0dc1\u0dca\u0dc0\u0dc0\u0dd2\u0daf\u0dca\u200d\u0dba\u0dcf\u0dbd\u0dba"}
+                              </div>
+                              <div className="text-center font-bold text-[9.5px] text-[#1e293b] truncate">
+                                {layoutConfig.titleTa || "\u0b87\u0bb2\u0b99\u0bcd\u0b95\u0bc8 \u0bb0\u0b9c\u0bb0\u0bbe\u0b9c \u0baa\u0bb2\u0bcd\u0b95\u0bb2\u0bc8\u0b95\u0bcd\u0b95\u0bb4\u0b95\u0bae\u0bcd"}
+                              </div>
+                            </div>
+
+                            {/* Bilateral statutory preambles */}
+                            <div 
+                              className="absolute w-full px-6 grid grid-cols-2 gap-4 text-slate-600 leading-normal"
+                              style={{ top: `${((841.89 - (layoutConfig.preambleY || 482)) / 841.89) * 100}%` }}
+                            >
+                              {/* Sinhala side */}
+                              <div className="text-[6.5px] whitespace-pre-line tracking-tight">
+                                {layoutConfig.preambleSiInternal || ""}
+                                <div className="font-bold text-[#8b7355] text-[7.5px] py-1">
+                                  තොරතුරු තාක්ෂණවේදීවේදී උපාධිය
+                                </div>
+                                <div className="mb-2">
+                                  {layoutConfig.suffixSi || ""}
+                                </div>
+                                <div className="text-[6px] text-slate-400 leading-tight">
+                                  {layoutConfig.dateSiLine1} <br />
+                                  {layoutConfig.dateSiLine2}
+                                </div>
+                              </div>
+
+                              {/* Tamil side */}
+                              <div className="text-[6.5px] whitespace-pre-line tracking-tight">
+                                {layoutConfig.preambleTaInternal || ""}
+                                <div className="font-bold text-[#8b7355] text-[7px] py-1">
+                                  தகவல் தொழில்நுட்பமானி பட்டத்தை
+                                </div>
+                                <div className="mb-2">
+                                  {layoutConfig.suffixTa || ""}
+                                </div>
+                                <div className="text-[6px] text-slate-400 leading-tight">
+                                  {layoutConfig.dateTaLine1} <br />
+                                  {layoutConfig.dateTaLine2}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Registrar Signature representation */}
+                            <div 
+                              className="absolute text-center"
+                              style={{ 
+                                left: `${((layoutConfig.registrarX || 99) / 595.275) * 100}%`,
+                                top: `${((841.89 - (layoutConfig.signatureY || 118)) / 841.89) * 100}%`,
+                                width: "120px",
+                                transform: "translateX(-50%)"
+                              }}
+                            >
+                              <div className="w-16 h-4 border-b border-dashed border-slate-300 mx-auto" />
+                              <span className="text-[6.5px] block font-sans text-slate-650 mt-1 leading-tight">{layoutConfig.registrarName}</span>
+                              <span className="text-[6.5px] block font-sans text-slate-450 leading-none">{layoutConfig.registrarTitle}</span>
+                            </div>
+
+                            {/* Vice Chancellor Signature representation */}
+                            <div 
+                              className="absolute text-center"
+                              style={{ 
+                                left: `${((layoutConfig.vcX || 496) / 595.275) * 100}%`,
+                                top: `${((841.89 - (layoutConfig.signatureY || 118)) / 841.89) * 100}%`,
+                                width: "120px",
+                                transform: "translateX(-50%)"
+                              }}
+                            >
+                              <div className="w-16 h-4 border-b border-dashed border-slate-300 mx-auto" />
+                              <span className="text-[6px] block font-sans text-slate-650 mt-1 leading-tight">{layoutConfig.vcName}</span>
+                              <span className="text-[6.5px] block font-sans text-slate-450 leading-none">{layoutConfig.vcTitle}</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </div>

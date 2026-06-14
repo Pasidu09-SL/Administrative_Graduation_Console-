@@ -5,6 +5,7 @@ import fs from 'fs';
 import { runAsAdmin } from '@/lib/db';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import { getAdminSession } from '@/lib/auth';
+import { DEFAULT_LAYOUT } from '@/app/api/admin/certificate-layout/route';
 
 // Extend node global scope for status tracking
 declare global {
@@ -513,7 +514,7 @@ export async function POST(req: Request) {
     await ensureTemplates();
 
     // Query approved students with assigned seating/certificate numbers matching selected faculty & degree
-    const students = await runAsAdmin(async (client) => {
+    const { students, layoutData } = await runAsAdmin(async (client) => {
       const activeYearRes = await client.query(
         "SELECT convocation_year FROM registration_windows WHERE is_active = TRUE LIMIT 1"
       );
@@ -530,7 +531,18 @@ export async function POST(req: Request) {
           AND s.convocation_year = $3
         ORDER BY s.index_no ASC
       `, [faculty, degreeId, activeYear]);
-      return res.rows;
+
+      const layoutRes = await client.query(
+        "SELECT layout_data FROM certificate_layouts WHERE convocation_year = $1",
+        [activeYear]
+      );
+      const dbLayout = layoutRes.rows[0]?.layout_data || {};
+      const mergedLayout = { ...DEFAULT_LAYOUT, ...dbLayout };
+
+      return {
+        students: res.rows,
+        layoutData: mergedLayout
+      };
     });
 
     if (students.length === 0) {
@@ -558,7 +570,8 @@ export async function POST(req: Request) {
       workerData: {
         students,
         outputPath,
-        templateDir: path.join(process.cwd(), 'public', 'templates')
+        templateDir: path.join(process.cwd(), 'public', 'templates'),
+        layoutData
       }
     });
 

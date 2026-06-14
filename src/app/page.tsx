@@ -29,8 +29,9 @@ export default function EntryPage() {
     const tokenParam = params.get('token');
     
     if (!tokenParam) {
-      setHasToken(false);
-      window.location.replace('/admin');
+      setHasToken(true);
+      setIsTokenMissing(true);
+      setError('Secure Access Required: Please click the unique magic link sent to your email.');
       return;
     }
 
@@ -38,7 +39,7 @@ export default function EntryPage() {
       setEmail(emailParam);
       setIsEmailLocked(true);
     }
-    setToken(tokenParam);
+    setToken(tokenParam || '');
     setIsTokenMissing(false);
     setHasToken(true);
 
@@ -67,15 +68,6 @@ export default function EntryPage() {
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center font-sans">
         <Loader2 className="h-8 w-8 text-blue-600 animate-spin" />
         <span className="text-xs font-bold text-slate-500 mt-2">Checking session parameters...</span>
-      </div>
-    );
-  }
-
-  if (hasToken === false) {
-    return (
-      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center font-sans">
-        <Loader2 className="h-8 w-8 text-blue-600 animate-spin" />
-        <span className="text-xs font-bold text-slate-500 mt-2">Redirecting to Admin Portal...</span>
       </div>
     );
   }
@@ -207,7 +199,15 @@ export default function EntryPage() {
             </CardHeader>
 
             <CardContent>
-
+              {isTokenMissing && (
+                <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 text-red-700 dark:text-red-400 rounded-xl text-xs font-bold flex items-start gap-2">
+                  <AlertCircle className="h-4 w-4 text-red-600 dark:text-red-500 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="block font-black uppercase text-[10px] tracking-wider text-red-655 dark:text-red-450 mb-1">Access Restricted</span>
+                    To log in, please click the secure link sent to your university email. If you haven't received it, contact the Exam Division.
+                  </div>
+                </div>
+              )}
                 <form onSubmit={handleLogin} className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="email" className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">

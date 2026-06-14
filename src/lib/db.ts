@@ -247,6 +247,16 @@ export async function runMigrations() {
         ALTER TABLE students DROP CONSTRAINT IF EXISTS unique_email_convocation;
         ALTER TABLE students ADD CONSTRAINT unique_email_convocation UNIQUE (email, convocation_year);
       `);
+
+      // 7. Create certificate_layouts table if not exists
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS certificate_layouts (
+          convocation_year VARCHAR(50) PRIMARY KEY,
+          layout_data JSONB NOT NULL,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
     }
   } catch (err) {
     console.error("Error running migrations:", err);

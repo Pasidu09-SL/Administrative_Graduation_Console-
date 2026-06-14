@@ -664,8 +664,21 @@ async function runTests() {
     // ----------------------------------------------------
     console.log('\n[TEST 10] Running Seating Allocation Algorithmic Edge Case Test...');
     
-    // Approve all students so they are eligible for seating allocation, and set them as attending
-    await pool.query("UPDATE students SET verification_status = 'Approved', attending_convocation = TRUE");
+    // Clear any previous seating allocations first
+    await pool.query("UPDATE students SET session_number = NULL, seat_number = NULL, certificate_number = NULL");
+
+    // Set one student in Faculty of Applied Sciences to attending = FALSE
+    const nonAttendingStudentRes = await pool.query(
+      "SELECT id FROM students WHERE faculty = 'Faculty of Applied Sciences' LIMIT 1"
+    );
+    const nonAttendingId = nonAttendingStudentRes.rows[0].id;
+    await pool.query(
+      "UPDATE students SET verification_status = 'Approved', attending_convocation = TRUE"
+    );
+    await pool.query(
+      "UPDATE students SET attending_convocation = FALSE WHERE id = $1",
+      [nonAttendingId]
+    );
 
     // Assign "Faculty of Applied Sciences" (250 students) to Session 1
     const assignFac1 = await fetch(`${BASE_URL}/api/admin/sessions`, {
@@ -689,15 +702,55 @@ async function runTests() {
     });
     const allocation2 = (await assignFac2.json()).data;
 
-    // Check seating ranges: Faculty A should be 1-250. Faculty B should be 251-500.
+    // Check that the non-attending student got NULL seat, session 1, and certificate
+    const nonAttendingCheck = await pool.query(
+      "SELECT seat_number, session_number, certificate_number FROM students WHERE id = $1",
+      [nonAttendingId]
+    );
+    const naRecord = nonAttendingCheck.rows[0];
+
+    if (naRecord.seat_number !== null) {
+      throw new Error(`Expected non-attending student to have NULL seat, got: ${naRecord.seat_number}`);
+    }
+    if (naRecord.session_number !== 1) {
+      throw new Error(`Expected non-attending student to have session 1, got: ${naRecord.session_number}`);
+    }
+    if (!naRecord.certificate_number) {
+      throw new Error('Expected non-attending student to have a certificate number');
+    }
+
+    const seatCheck = await pool.query(
+      "SELECT COUNT(*) as count FROM students WHERE faculty = 'Faculty of Applied Sciences' AND seat_number IS NOT NULL"
+    );
+    if (parseInt(seatCheck.rows[0].count) !== 249) {
+      throw new Error(`Expected 249 attending students with seats in Faculty 1, got: ${seatCheck.rows[0].count}`);
+    }
+
+    // Check seating ranges: Faculty A should be 1-249. Faculty B should be 250-499.
     if (
-      allocation1.startingSeat === 1 && allocation1.endingSeat === 250 &&
-      allocation2.startingSeat === 251 && allocation2.endingSeat === 500
+      allocation1.startingSeat === 1 && allocation1.endingSeat === 249 &&
+      allocation2.startingSeat === 250 && allocation2.endingSeat === 499
     ) {
-      console.log(`✓ Success: Sequential seating calculations verified. Unbroken seat chain created (1-250 and 251-500).`);
+      console.log(`✓ Success: Sequential seating calculations verified. Unbroken seat chain created (1-249 and 250-499) with non-attending student correctly omitted from seating but allocated session and certificate.`);
     } else {
       throw new Error(`Algorithmic Test Failed! Seating ranges: Fac1 = ${allocation1.startingSeat}-${allocation1.endingSeat}, Fac2 = ${allocation2.startingSeat}-${allocation2.endingSeat}`);
     }
+
+    // Check certificate ranges: Faculty 1 should be 16041-16290, and Faculty 2 should be 16291-16540.
+    const certsFac1 = await pool.query(
+      "SELECT MIN(CAST(certificate_number AS INTEGER)) as min_cert, MAX(CAST(certificate_number AS INTEGER)) as max_cert FROM students WHERE faculty = 'Faculty of Applied Sciences' AND convocation_year = '2026'"
+    );
+    const certsFac2 = await pool.query(
+      "SELECT MIN(CAST(certificate_number AS INTEGER)) as min_cert, MAX(CAST(certificate_number AS INTEGER)) as max_cert FROM students WHERE faculty = 'Faculty of Social Sciences & Humanities' AND convocation_year = '2026'"
+    );
+
+    if (certsFac1.rows[0].min_cert !== 16041 || certsFac1.rows[0].max_cert !== 16290) {
+      throw new Error(`Expected Faculty 1 certificates to be 16041-16290, got: ${certsFac1.rows[0].min_cert}-${certsFac1.rows[0].max_cert}`);
+    }
+    if (certsFac2.rows[0].min_cert !== 16291 || certsFac2.rows[0].max_cert !== 16540) {
+      throw new Error(`Expected Faculty 2 certificates to be 16291-16540, got: ${certsFac2.rows[0].min_cert}-${certsFac2.rows[0].max_cert}`);
+    }
+    console.log("✓ Success: Certificate sequential numbering verified across sessions/faculties (16041-16290 and 16291-16540).");
 
     // ----------------------------------------------------
     // Test 11: Asynchronous Queue Test (Certificates)
@@ -1179,6 +1232,151 @@ async function runTests() {
       throw new Error(`Expected re-imported student's attendance_confirmed to be false, got: ${freshStudent.attendance_confirmed}`);
     }
     console.log('✓ Success: Student successfully deleted with all related info, and re-import treated them as a new student.');
+
+    // ----------------------------------------------------
+    // Test 20: Multi-Year Identical Student Registry and Login
+    // ----------------------------------------------------
+    console.log('\n[TEST 20] Running Multi-Year Identical Student Registry and Login Test...');
+    
+    // Switch active year to 2027 and insert identical student info
+    await fetch(`${BASE_URL}/api/admin/active-session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Cookie': adminCookieHeader },
+      body: JSON.stringify({ convocation_year: '2027' })
+    });
+    
+    // Open/configure the timeline for active year 2027
+    await fetch(`${BASE_URL}/api/timeline`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Cookie': adminCookieHeader
+      },
+      body: JSON.stringify({
+        open_date: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+        close_date: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString()
+      })
+    });
+    
+    const ingest2027Res = await fetch(`${BASE_URL}/api/ingestion/commit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        rows: [{
+          name_with_initials: 'Student One 2027',
+          full_name: 'Student One Full Name 2027',
+          registration_no: 'REG/2026/1001',
+          index_no: 'INDEX-260001',
+          nic_no: 'NIC-260001',
+          faculty: 'Faculty of Applied Sciences',
+          degreeId: deg1.id,
+          address: 'Uni Address 2027',
+          contact_no: '0777777777',
+          email: 'student1@uni.ac.lk',
+          gpa: '3.50',
+          class: 'General'
+        }]
+      })
+    });
+    
+    if (ingest2027Res.status !== 200) {
+      throw new Error(`Ingesting identical student under 2027 failed. Status: ${ingest2027Res.status}`);
+    }
+
+    const magicToken2027 = signMagicToken('student1@uni.ac.lk', 'INDEX-260001', '2027');
+    const login2027Res = await fetch(`${BASE_URL}/api/student/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'student1@uni.ac.lk',
+        index_no: 'INDEX-260001',
+        nic_no: 'NIC-260001',
+        token: magicToken2027
+      })
+    });
+
+    if (login2027Res.status !== 200) {
+      throw new Error(`Login failed for identical student scoped to 2027. Status: ${login2027Res.status}, Body: ${await login2027Res.text()}`);
+    }
+
+    const cookieHeader2027 = login2027Res.headers.get('set-cookie') || '';
+    
+    const profile2027Res = await fetch(`${BASE_URL}/api/student/profile`, {
+      headers: { 'Cookie': cookieHeader2027 }
+    });
+    const profile2027 = (await profile2027Res.json()).data;
+    
+    if (profile2027.name_with_initials !== 'Student One 2027' || profile2027.convocation_year !== '2027') {
+      throw new Error(`Profile retrieval year scoping failed. Expected Student One 2027. Got: ${JSON.stringify(profile2027)}`);
+    }
+
+    console.log('✓ Success: Scoped token and session authentication successfully isolated identical students across convocation cohorts.');
+
+    // ----------------------------------------------------
+    // Test 21: Custom Certificate Layout API & rendering
+    // ----------------------------------------------------
+    console.log('\n[TEST 21] Running Certificate Custom Layout API & rendering Test...');
+    
+    await fetch(`${BASE_URL}/api/admin/active-session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Cookie': adminCookieHeader },
+      body: JSON.stringify({ convocation_year: '2026' })
+    });
+
+    const customLayoutPost = await fetch(`${BASE_URL}/api/admin/certificate-layout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Cookie': adminCookieHeader },
+      body: JSON.stringify({
+        convocation_year: '2026',
+        layout_data: {
+          studentNameY: 512,
+          studentNameFontSize: 24,
+          registrarName: 'CUSTOM REGISTRAR NAME',
+          vcName: 'CUSTOM VC NAME'
+        }
+      })
+    });
+
+    if (customLayoutPost.status !== 200) {
+      throw new Error(`Failed to POST custom layout. Status: ${customLayoutPost.status}`);
+    }
+
+    const getLayoutRes = await fetch(`${BASE_URL}/api/admin/certificate-layout?convocation_year=2026`, {
+      headers: { 'Cookie': adminCookieHeader }
+    });
+    const layoutResJson = await getLayoutRes.json();
+    if (!layoutResJson.success || layoutResJson.data.studentNameY !== 512 || layoutResJson.data.registrarName !== 'CUSTOM REGISTRAR NAME') {
+      throw new Error(`Custom layout API GET verification failed. Data: ${JSON.stringify(layoutResJson)}`);
+    }
+
+    const genCertRes = await fetch(`${BASE_URL}/api/admin/certificates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Cookie': adminCookieHeader },
+      body: JSON.stringify({
+        faculty: 'Faculty of Applied Sciences',
+        degreeId: deg1.id
+      })
+    });
+
+    if (genCertRes.status !== 202) {
+      throw new Error(`Certificate trigger failed with status: ${genCertRes.status}`);
+    }
+
+    let finalStatus: any = {};
+    for (let i = 0; i < 30; i++) {
+      const checkRes = await fetch(`${BASE_URL}/api/admin/certificates`, {
+        headers: { 'Cookie': adminCookieHeader }
+      });
+      finalStatus = (await checkRes.json()).data;
+      if (finalStatus.status === 'completed' || finalStatus.status === 'failed') break;
+      await sleep(1000);
+    }
+
+    if (finalStatus.status !== 'completed') {
+      throw new Error(`Certificate compilation with custom layout failed: ${finalStatus.error}`);
+    }
+
+    console.log('✓ Success: Custom layout successfully saved, merged, and applied to background certificate compilation.');
 
     console.log('\n=== ALL TESTS PASSED SUCCESSFULLY! ===');
   } catch (err: any) {

@@ -32,7 +32,7 @@ export async function POST(req: Request) {
 
       // 2. Fetch targeted students
       const studRes = await client.query(
-        "SELECT id, email, index_no, name_with_initials, session_number, seat_number, certificate_number FROM students WHERE id = ANY($1)",
+        "SELECT id, email, index_no, convocation_year, name_with_initials, session_number, seat_number, certificate_number FROM students WHERE id = ANY($1)",
         [studentIds],
       );
       const students = studRes.rows;
@@ -72,7 +72,7 @@ export async function POST(req: Request) {
           }
         } else {
           // Generate magic token and link
-          magicToken = signMagicToken(student.email, student.index_no);
+          magicToken = signMagicToken(student.email, student.index_no, student.convocation_year);
           const magicLink = `${origin}/api/student/auth/magic-login?email=${encodeURIComponent(student.email.toLowerCase().trim())}&token=${encodeURIComponent(magicToken)}`;
 
           subject = "Convocation Registration - Action Required";

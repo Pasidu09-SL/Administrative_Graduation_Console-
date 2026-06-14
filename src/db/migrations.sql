@@ -22,6 +22,7 @@ DROP TABLE IF EXISTS degrees CASCADE;
 DROP TABLE IF EXISTS faculties CASCADE;
 DROP TABLE IF EXISTS convocation_sessions CASCADE;
 DROP TABLE IF EXISTS email_templates CASCADE;
+DROP TABLE IF EXISTS certificate_layouts CASCADE;
 
 -- Module 1: Course (Degree) Management
 CREATE TABLE degrees (
@@ -218,6 +219,14 @@ ON CONFLICT (template_key) DO NOTHING;
 
 -- Staff status update
 ALTER TABLE staff ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'Active' CHECK (status IN ('Active', 'Disabled'));
+
+-- Certificate Layouts Table
+CREATE TABLE IF NOT EXISTS certificate_layouts (
+  convocation_year VARCHAR(50) PRIMARY KEY,
+  layout_data JSONB NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
 
 -- Grant all privileges to the app_user role so it can query and modify inside the RLS context
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO app_user;

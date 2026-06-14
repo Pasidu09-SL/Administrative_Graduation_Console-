@@ -8,7 +8,7 @@ const path = require('path');
 
 async function generate() {
   try {
-    const { students, outputPath, templateDir } = workerData;
+    const { students, outputPath, templateDir, layoutData = {} } = workerData;
 
     // Load templates ONCE
     const templates = {
@@ -54,16 +54,17 @@ async function generate() {
 
       // 1. Draw dynamic student full name centered (with auto-scaling, All Caps, single-line)
       const nameText = (student.full_name || '').toUpperCase();
-      let nameSize = 26;
+      let nameSize = layoutData.studentNameFontSize !== undefined ? layoutData.studentNameFontSize : 26;
       let nameWidth = timesBold.widthOfTextAtSize(nameText, nameSize);
       while (nameWidth > 481.89 && nameSize > 16) {
         nameSize -= 0.5;
         nameWidth = timesBold.widthOfTextAtSize(nameText, nameSize);
       }
       const nameX = (frontPage.getWidth() - nameWidth) / 2;
+      const nameY = layoutData.studentNameY !== undefined ? layoutData.studentNameY : 490;
       frontPage.drawText(nameText, {
         x: nameX,
-        y: 490,
+        y: nameY,
         size: nameSize,
         font: timesBold,
         color: rgb(0.1, 0.1, 0.1)
@@ -72,7 +73,7 @@ async function generate() {
       // 2. Draw dynamic degree name centered (with auto-scaling & wrapping, max 2 lines)
       const degText = (student.degree_name_en || '').toUpperCase();
       const maxDegWidth = 481.89;
-      let degSize = 20;
+      let degSize = layoutData.degreeNameFontSize !== undefined ? layoutData.degreeNameFontSize : 20;
 
       // Wrap words
       const words = degText.split(' ');
@@ -113,7 +114,8 @@ async function generate() {
       }
 
       // Draw the degree lines
-      let currentY = lines.length === 2 ? 415 : 405;
+      const degreeY = layoutData.degreeNameY !== undefined ? layoutData.degreeNameY : 405;
+      let currentY = lines.length === 2 ? degreeY + 10 : degreeY;
       for (const line of lines) {
         const w = timesBold.widthOfTextAtSize(line, degSize);
         frontPage.drawText(line, {
@@ -127,23 +129,25 @@ async function generate() {
       }
 
       // 3. Draw conferment details dates
-      const dateDigital = "15th January 2023";
+      const dateDigital = layoutData.dateDigitalText || "15th January 2023";
       const line1Text = `on ${dateDigital}`;
       const line1Width = timesRoman.widthOfTextAtSize(line1Text, 12);
+      const dateDigitalY = layoutData.dateDigitalY !== undefined ? layoutData.dateDigitalY : 350;
       frontPage.drawText(line1Text, {
         x: (frontPage.getWidth() - line1Width) / 2,
-        y: 350,
+        y: dateDigitalY,
         size: 12,
         font: timesRoman,
         color: rgb(0.15, 0.15, 0.15)
       });
 
-      const dateWords = "Twenty Seventh Day of July in the Year Two Thousand Twenty Three";
+      const dateWords = layoutData.dateVerbalText || "Twenty Seventh Day of July in the Year Two Thousand Twenty Three";
       const line5Text = `held on ${dateWords}`;
       const line5Width = timesRoman.widthOfTextAtSize(line5Text, 12);
+      const dateVerbalY = layoutData.dateVerbalY !== undefined ? layoutData.dateVerbalY : 245;
       frontPage.drawText(line5Text, {
         x: (frontPage.getWidth() - line5Width) / 2,
-        y: 245,
+        y: dateVerbalY,
         size: 12,
         font: timesRoman,
         color: rgb(0.15, 0.15, 0.15)
@@ -216,35 +220,28 @@ async function generate() {
       }
 
       // 3. Draw Section B multi-lingual statutory text (side-by-side)
+      const titleY = layoutData.titleY !== undefined ? layoutData.titleY : 500;
       const colSiCenter = 45 + (275 - 45) / 2;
       const titleSi = "ශ්‍රී ලංකා රජරාජ විශ්වවිද්‍යාලය";
       const titleSiW = fontSi.widthOfTextAtSize(titleSi, 12);
       backPage.drawText(titleSi, {
         x: colSiCenter - titleSiW / 2,
-        y: 500,
+        y: titleY,
         font: fontSi,
         size: 12,
         color: rgb(0.1, 0.1, 0.1)
       });
 
       const isInternalCand = student.degree_type === 'Internal';
+      const preambleY = layoutData.preambleY !== undefined ? layoutData.preambleY : 482;
       
       // Draw Pre-wrapped Sinhala preamble
-      const preambleSiLines = isInternalCand
-        ? [
-            "මෙම විශ්වවිද්‍යාලයේ අභ්‍යන්තර අපේක්ෂකයෙකු ලෙස",
-            "නියමිත අධ්‍යයන පාඨමාලා සහ පරීක්ෂණ සාර්ථක",
-            "ලෙස නිම කිරීමෙන් පසු මෙහි පසු පිටේ නම",
-            "සඳහන් අය වෙත"
-          ]
-        : [
-            "මෙම විශ්වවිද්‍යාලයේ බාහිර අපේක්ෂකයෙකු ලෙස",
-            "නියමිත අධ්‍යයන පාඨමාලා සහ පරීක්ෂණ සාර්ථක",
-            "ලෙස නිම කිරීමෙන් පසු මෙහි පසු පිටේ නම",
-            "සඳහන් අය වෙත"
-          ];
+      const preambleSiText = isInternalCand
+        ? (layoutData.preambleSiInternal || "මෙම විශ්වවිද්‍යාලයේ අභ්‍යන්තර අපේක්ෂකයෙකු ලෙස\nනියමිත අධ්‍යයන පාඨමාලා සහ පරීක්ෂණ සාර්ථක\nලෙස නිම කිරීමෙන් පසු මෙහි පසු පිටේ නම\nසඳහන් අය වෙත")
+        : (layoutData.preambleSiExternal || "මෙම විශ්වවිද්‍යාලයේ බාහිර අපේක්ෂකයෙකු ලෙස\nනියමිත අධ්‍යයන පාඨමාලා සහ පරීක්ෂණ සාර්ථක\nලෙස නිම කිරීමෙන් පසු මෙහි පසු පිටේ නම\nසඳහන් අය වෙත");
 
-      let nextYSi = 482;
+      const preambleSiLines = preambleSiText.split('\n');
+      let nextYSi = preambleY;
       for (const line of preambleSiLines) {
         backPage.drawText(line, {
           x: 45,
@@ -261,19 +258,22 @@ async function generate() {
       nextYSi = drawDynamicColumnText(backPage, siDegreeText, fontSi, 11, 45, 275, nextYSi, 4);
 
       nextYSi -= 2;
-      const suffixSi = "පිරිනමන ලද බව මෙයින් සහතික කරමු.";
-      backPage.drawText(suffixSi, {
-        x: 45,
-        y: nextYSi,
-        font: fontSi,
-        size: 9,
-        color: rgb(0.15, 0.15, 0.15)
-      });
-      nextYSi -= 13;
+      const suffixSiText = layoutData.suffixSi || "පිරිනමන ලද බව මෙයින් සහතික කරමු.";
+      const suffixSiLines = suffixSiText.split('\n');
+      for (const line of suffixSiLines) {
+        backPage.drawText(line, {
+          x: 45,
+          y: nextYSi,
+          font: fontSi,
+          size: 9,
+          color: rgb(0.15, 0.15, 0.15)
+        });
+        nextYSi -= 13;
+      }
 
       nextYSi -= 5;
-      const dateSi1 = "වලංගු වීමේ දිනය: 15/01/2023";
-      const dateSi2 = "උපාධි ප්‍රදානෝත්සවය: 2023 ජූලි මස 27";
+      const dateSi1 = layoutData.dateSiLine1 || "වලංගු වීමේ දිනය: 15/01/2023";
+      const dateSi2 = layoutData.dateSiLine2 || "උපාධි ප්‍රදානෝත්සවය: 2023 ජූලි මස 27";
       backPage.drawText(dateSi1, { x: 45, y: nextYSi, font: fontSi, size: 8, color: rgb(0.3, 0.3, 0.3) });
       nextYSi -= 11;
       backPage.drawText(dateSi2, { x: 45, y: nextYSi, font: fontSi, size: 8, color: rgb(0.3, 0.3, 0.3) });
@@ -284,28 +284,19 @@ async function generate() {
       const titleTaW = fontTa.widthOfTextAtSize(titleTa, 11);
       backPage.drawText(titleTa, {
         x: colTaCenter - titleTaW / 2,
-        y: 500,
+        y: titleY,
         font: fontTa,
         size: 11,
         color: rgb(0.1, 0.1, 0.1)
       });
 
       // Draw Pre-wrapped Tamil preamble
-      const preambleTaLines = isInternalCand
-        ? [
-            "இப்பல்கலைக்கழகத்தில் குறிப்பிட்ட உள்வாரி கற்கை",
-            "நெறிகளையும் பரீட்சைகளையும் வெற்றிகரமாக",
-            "நிறைவு செய்ததன் பின்னர், இச்சான்றிதழின்",
-            "மறுபக்கத்தில் பெயர் குறிப்பிடப்பட்டுள்ளவருக்கு"
-          ]
-        : [
-            "இப்பல்கலைக்கழகத்தில் குறிப்பிட்ட வெளிவாரி கற்கை",
-            "நெறிகளையும் பரீட்சைகளையும் வெற்றிகரமாக",
-            "நிறைவு செய்ததன் பின்னர், இச்சான்றிதழின்",
-            "மறுபக்கத்தில் பெயர் குறிப்பிடப்பட்டுள்ளவருக்கு"
-          ];
+      const preambleTaText = isInternalCand
+        ? (layoutData.preambleTaInternal || "இப்பல்கலைக்கழகத்தில் குறிப்பிட்ட உள்வாரி கற்கை\nநெறிகளையும் பரீட்சைகளையும் வெற்றிகரமாக\nநிறைவு செய்ததன் பின்னர், இச்சான்றிதழின்\nமறுபக்கத்தில் பெயர் குறிப்பிடப்பட்டுள்ளவருக்கு")
+        : (layoutData.preambleTaExternal || "இப்பல்கலைக்கழகத்தில் குறிப்பிட்ட வெளிவாரி கற்கை\nநெறிகளையும் பரீட்சைகளையும் வெற்றிகரமாக\nநிறைவு செய்ததன் பின்னர், இச்சான்றிதழின்\nமறுபக்கத்தில் பெயர் குறிப்பிடப்பட்டுள்ளவருக்கு");
 
-      let nextYTa = 482;
+      const preambleTaLines = preambleTaText.split('\n');
+      let nextYTa = preambleY;
       for (const line of preambleTaLines) {
         backPage.drawText(line, {
           x: 320,
@@ -322,10 +313,8 @@ async function generate() {
       nextYTa = drawDynamicColumnText(backPage, taDegreeText, fontTa, 10, 320, 550, nextYTa, 4);
 
       nextYTa -= 2;
-      const suffixTaLines = [
-        "வழங்கப்பட்டதென இத்தால்",
-        "உறுதிப்படுத்துகின்றோம்."
-      ];
+      const suffixTaText = layoutData.suffixTa || "வழங்கப்பட்டதென இத்தால்\nஉறுதிப்படுத்துகின்றோம்.";
+      const suffixTaLines = suffixTaText.split('\n');
       for (const line of suffixTaLines) {
         backPage.drawText(line, {
           x: 320,
@@ -338,51 +327,55 @@ async function generate() {
       }
 
       nextYTa -= 5;
-      const dateTa1 = "செல்லுபடியாகும் திகதி: 15/01/2023";
-      const dateTa2 = "பட்டமளிப்பு விழா: 27 ஜூலை 2023";
+      const dateTa1 = layoutData.dateTaLine1 || "செல்லுபடியாகும் திகதி: 15/01/2023";
+      const dateTa2 = layoutData.dateTaLine2 || "பட்டமளிப்பு விழா: 27 ஜூலை 2023";
       backPage.drawText(dateTa1, { x: 320, y: nextYTa, font: fontTa, size: 8, color: rgb(0.3, 0.3, 0.3) });
       nextYTa -= 11;
       backPage.drawText(dateTa2, { x: 320, y: nextYTa, font: fontTa, size: 8, color: rgb(0.3, 0.3, 0.3) });
 
       // 4. Draw reverse side signature names/labels
-      const regNameBack = "එස්.සී. හේරත් / எஸ்.சி.ஹேரத்";
-      const regTitleBack = "ලේඛකාධිකාරි / பதிவாளர்";
+      const regNameBack = layoutData.registrarName || "එස්.සී. හේරත් / எஸ்.சி.ஹேரத்";
+      const regTitleBack = layoutData.registrarTitle || "ලේඛකාධිකාරි / பதிவாளர்";
+      const signatureY = layoutData.signatureY !== undefined ? layoutData.signatureY : 118;
+      const registrarX = layoutData.registrarX !== undefined ? layoutData.registrarX : 99.213;
+
       const regNameW = fontSi.widthOfTextAtSize(regNameBack, 8);
       backPage.drawText(regNameBack, {
-        x: 99.213 - (regNameW / 2),
-        y: 118,
+        x: registrarX - (regNameW / 2),
+        y: signatureY,
         font: fontSi,
         size: 8,
         color: rgb(0.2, 0.2, 0.2)
       });
       const regTitleW = fontSi.widthOfTextAtSize(regTitleBack, 8);
       backPage.drawText(regTitleBack, {
-        x: 99.213 - (regTitleW / 2),
-        y: 106,
+        x: registrarX - (regTitleW / 2),
+        y: signatureY - 12,
         font: fontSi,
         size: 8,
         color: rgb(0.2, 0.2, 0.2)
       });
 
-      const vcNameBack = "වෛද්‍ය පී.එච්.ජී.ජේ. පුෂ්පකුමාර / வைத்தியர் பி.எச்.ஜி.ஜே. புஷ்பகுமார";
-      const vcTitleBack = "වැඩ බලන උපකුලපති / பதில் உபவேந்தர்";
+      const vcNameBack = layoutData.vcName || "වෛද්‍ය පී.එච්.ජේ. පුෂ්පකුමාර / வைத்தியர் பி.எச்.ஜி.ஜே. புஷ்பகுமார";
+      const vcTitleBack = layoutData.vcTitle || "වැඩ බලන උපකුලපති / பதில் உபவேந்தர்";
+      const vcX = layoutData.vcX !== undefined ? layoutData.vcX : 496.063;
+
       const vcNameW = fontSi.widthOfTextAtSize(vcNameBack, 7.5);
       backPage.drawText(vcNameBack, {
-        x: 496.063 - (vcNameW / 2),
-        y: 118,
+        x: vcX - (vcNameW / 2),
+        y: signatureY,
         font: fontSi,
         size: 7.5,
         color: rgb(0.2, 0.2, 0.2)
       });
       const vcTitleW = fontSi.widthOfTextAtSize(vcTitleBack, 8);
       backPage.drawText(vcTitleBack, {
-        x: 496.063 - (vcTitleW / 2),
-        y: 106,
+        x: vcX - (vcTitleW / 2),
+        y: signatureY - 12,
         font: fontSi,
         size: 8,
         color: rgb(0.2, 0.2, 0.2)
       });
-
       processedCount++;
       if (parentPort) {
         parentPort.postMessage({ type: 'progress', current: processedCount, total: students.length });
