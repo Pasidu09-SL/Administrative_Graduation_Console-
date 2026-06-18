@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import React, { useEffect, useState, useRef } from "react";
 import {
@@ -1102,210 +1102,259 @@ export default function AdminDashboard() {
     URL.revokeObjectURL(url);
   };
 
-  // ─── DOCUMENT 2: Verification Letter PDF ────────────────────────────────
-  const generateVerificationLetterPDF = async (
-    student: any,
-    inputs: typeof verLetterInputs
-  ): Promise<Blob> => {
-    const doc = new jsPDF({ unit: "mm", format: "a4" });
-    const W = 210;
-    const margin = 20;
-    let y = 15;
+// ─── DOCUMENT 2: Verification Letter PDF ────────────────────────────────
+const generateVerificationLetterPDF = async (
+  student: any,
+  inputs: typeof verLetterInputs
+): Promise<Blob> => {
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const W = 210;
+  const margin = 20;
+  const contentWidth = W - margin * 2; // Exactly 170mm print space
+  let y = 15;
 
-    // ── Load logo ──
-    const loadImageAsDataURL = (src: string): Promise<string> =>
-      new Promise((resolve, reject) => {
-        const img = new Image();
-        img.crossOrigin = "anonymous";
-        img.onload = () => {
-          const canvas = document.createElement("canvas");
-          canvas.width = img.width;
-          canvas.height = img.height;
-          const ctx = canvas.getContext("2d");
-          if (!ctx) return reject("No canvas context");
-          // Draw greyscale
-          ctx.filter = "grayscale(100%)";
-          ctx.drawImage(img, 0, 0);
-          resolve(canvas.toDataURL("image/png"));
-        };
-        img.onerror = reject;
-        img.src = src;
-      });
+  // Helper: Render complex scripts via canvas to get perfect native browser shaping
+  const renderComplexTextToDataURL = (
+    text: string, 
+    fontFamily: string, 
+    fontSizePx: number, 
+    isBold = false,
+    align: 'left' | 'right' = 'left'
+  ): string => {
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return "";
 
-    let logoDataUrl: string | null = null;
-    try {
-      logoDataUrl = await loadImageAsDataURL("/templates/RUSL.png");
-    } catch {
-      logoDataUrl = null;
-    }
+    // Crisp high-resolution canvas bounds
+    canvas.width = 1200;
+    canvas.height = 80;
+    
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#000000";
+    ctx.font = `${isBold ? "bold" : "normal"} ${fontSizePx}px "${fontFamily}", sans-serif`;
+    ctx.textBaseline = "middle";
 
-    // ── HEADER (3 columns) ──
-    const colW = (W - margin * 2) / 3;
-
-    // Left: University names (3 languages)
-    doc.setFontSize(8);
-    doc.setFont("helvetica", "bold");
-    const leftLines = [
-      "රාජරාට විශ්වවිද්‍යාලය",
-      "ராஜரட பல்கலைக்கழகம்",
-      "Rajarata University",
-      "of Sri Lanka",
-    ];
-    leftLines.forEach((line, i) => {
-      doc.text(line, margin, y + i * 4.5, { align: "left" });
-    });
-
-    // Center: Logo
-    if (logoDataUrl) {
-      doc.addImage(logoDataUrl, "PNG", margin + colW + 5, y, 22, 22);
+    if (align === 'left') {
+      ctx.textAlign = "left";
+      ctx.fillText(text, 0, canvas.height / 2);
     } else {
-      doc.setFontSize(8);
-      doc.text("[LOGO]", margin + colW + 10, y + 10, { align: "center" });
+      ctx.textAlign = "right";
+      ctx.fillText(text, canvas.width, canvas.height / 2);
     }
 
-    // Right: Mihinthale
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-    const rightLines = [
-      "මිහින්තලේ, ශ්‍රී ලංකාව",
-      "மிஹிந்தலே, இலங்கை",
-      "Mihinthale,",
-      "Sri Lanka",
-    ];
-    rightLines.forEach((line, i) => {
-      doc.text(line, W - margin, y + i * 4.5, { align: "right" });
-    });
-
-    y += 26;
-
-    // Header divider
-    doc.setDrawColor(0);
-    doc.setLineWidth(0.5);
-    doc.line(margin, y, W - margin, y);
-    y += 4;
-
-    // Tel / Fax
-    doc.setFontSize(7.5);
-    doc.setFont("helvetica", "normal");
-    doc.text("Tel: +94 25 226 5600  |  Fax: +94 25 226 5601  |  Email: registrar@rjt.ac.lk", W / 2, y, { align: "center" });
-    y += 4;
-
-    doc.line(margin, y, W - margin, y);
-    y += 6;
-
-    // ── REFERENCE COLUMNS (2 columns) ──
-    doc.setFontSize(9);
-    const refLeft = margin;
-    const refRight = W / 2 + 5;
-
-    // Left column
-    doc.setFont("helvetica", "bold");
-    doc.text("Your Number:", refLeft, y);
-    doc.setFont("helvetica", "normal");
-    doc.text(inputs.yourNumber || ".....................", refLeft + 28, y);
-    y += 5;
-    doc.setFont("helvetica", "bold");
-    doc.text("Our Ref:", refLeft, y);
-    doc.setFont("helvetica", "normal");
-    doc.text(inputs.ourRef || ".....................", refLeft + 28, y);
-    y -= 5;
-
-    // Right column
-    doc.setFont("helvetica", "bold");
-    doc.text("My Number:", refRight, y);
-    doc.setFont("helvetica", "normal");
-    doc.text(inputs.myNumber || ".....................", refRight + 25, y);
-    y += 5;
-    doc.setFont("helvetica", "bold");
-    doc.text("File Number:", refRight, y);
-    doc.setFont("helvetica", "normal");
-    doc.text(inputs.fileNumber || ".....................", refRight + 25, y);
-    y += 5;
-    doc.setFont("helvetica", "bold");
-    doc.text("Date:", refRight, y);
-    doc.setFont("helvetica", "normal");
-    const today = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
-    doc.text(today, refRight + 25, y);
-    y += 10;
-
-    // ── ADDRESSEE ──
-    const addressLines = (inputs.addressee || "").split("\n");
-    doc.setFontSize(9.5);
-    for (const line of addressLines) {
-      doc.setFont("helvetica", "normal");
-      doc.text(line, margin, y);
-      y += 5;
-    }
-    y += 3;
-
-    // ── SUBJECT ──
-    const subject = `Verification of Degree Certificate - ${student.full_name || student.name_with_initials}`;
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(9.5);
-    doc.text("Subject: ", margin, y);
-    const subjectX = margin + doc.getTextWidth("Subject: ");
-    doc.setFont("helvetica", "normal");
-    // Draw underlined subject text
-    doc.text(subject, subjectX, y);
-    const subjectW = doc.getTextWidth(subject);
-    doc.line(subjectX, y + 0.5, subjectX + subjectW, y + 0.5);
-    y += 8;
-
-    // ── REFERENCE SENTENCE ──
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9.5);
-    const refDate = inputs.refLetterDate || "........................";
-    const refSentence = `This has reference to your letter ${refDate} on the above subject.`;
-    const refLines = doc.splitTextToSize(refSentence, W - margin * 2);
-    doc.text(refLines, margin, y);
-    y += refLines.length * 5 + 6;
-
-    // ── DETAIL FIELDS ──
-    const fields: [string, string][] = [
-      ["Name of the Certificate", "Degree Certificate"],
-      ["Name in Full", student.full_name || student.name_with_initials || ""],
-      ["Degree", student.degree_name_en || ""],
-      ["Effective Date of the Degree", student.effective_date ? new Date(student.effective_date).toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" }) : (student.convocation_year || "")],
-      ["Graduation Date", (() => {
-        const sess = convocationSessions.find((s: any) => s.session_number === student.session_number);
-        return sess?.session_date ? new Date(sess.session_date).toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" }) : (student.convocation_year || "");
-      })()],
-      ["Serial No. of the Certificate", student.certificate_number ? String(student.certificate_number) : ""],
-      ["Reg. NO / Index No.", `${student.registration_no || ""}  /  ${student.index_no || ""}`],
-      ["Final GPA & Class", `${student.gpa ? Number(student.gpa).toFixed(2) : ""}${student.degree_class ? " - " + student.degree_class : ""}`],
-    ];
-
-    doc.setFontSize(9.5);
-    fields.forEach(([label, value], i) => {
-      doc.setFont("helvetica", "bold");
-      doc.text(`${i + 1}.`, margin, y);
-      doc.text(label, margin + 6, y);
-      doc.setFont("helvetica", "normal");
-      doc.text("-", margin + 75, y);
-      const wrappedVal = doc.splitTextToSize(value, W - margin - 85);
-      doc.text(wrappedVal, margin + 80, y);
-      y += wrappedVal.length > 1 ? wrappedVal.length * 5 : 6;
-    });
-
-    y += 6;
-
-    // ── CLOSING ──
-    const closing = "I am pleased to inform you that the above information is Genuine and the Degree has been awarded by the Rajarata University of Sri Lanka.";
-    const closingLines = doc.splitTextToSize(closing, W - margin * 2);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9.5);
-    doc.text(closingLines, margin, y);
-    y += closingLines.length * 5 + 14;
-
-    // ── SIGNATURE ──
-    doc.setFont("helvetica", "normal");
-    doc.text(inputs.staffName || ".......................................................", margin, y);
-    y += 5;
-    doc.setFont("helvetica", "bold");
-    doc.text("Deputy Registrar", margin, y);
-
-    return doc.output("blob");
+    return canvas.toDataURL("image/png");
   };
+
+  // ── Load logo ──
+  const loadImageAsDataURL = (src: string): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return reject("No canvas context");
+        ctx.filter = "grayscale(100%)";
+        ctx.drawImage(img, 0, 0);
+        resolve(canvas.toDataURL("image/png"));
+      };
+      img.onerror = reject;
+      img.src = src;
+    });
+
+  let logoDataUrl: string | null = null;
+  try {
+    logoDataUrl = await loadImageAsDataURL("/templates/RUSL.png");
+  } catch {
+    logoDataUrl = null;
+  }
+
+  // ── HEADER (3 columns aligned to logo base) ──
+  // Logo sits at y=15 with height=20mm (bottom is at y=35).
+  // Aligning text lines down so the final English lines hit precisely around y=34.5.
+  const headerTextY = y + 11.5;
+
+  // Center: Logo
+  if (logoDataUrl) {
+    const logoW = 20;
+    const logoH = 20;
+    const logoX = (W - logoW) / 2;
+    doc.addImage(logoDataUrl, "PNG", logoX, y, logoW, logoH);
+  } else {
+    doc.setFontSize(8);
+    doc.setFont("helvetica", "bold");
+    doc.text("[LOGO]", W / 2, y + 10, { align: "center" });
+  }
+
+  // Left Side: University Names (Perfect Browser Shaping via Canvas)
+  const sinhalaLeftImg = renderComplexTextToDataURL("රජරට විශ්වවිද්‍යාලය", "Abhaya Libre", 36, true, 'left');
+  const tamilLeftImg = renderComplexTextToDataURL("ராஜரட பல்கலைக்கழகம்", "Pavanam", 32, true, 'left');
+
+  if (sinhalaLeftImg) doc.addImage(sinhalaLeftImg, "PNG", margin, headerTextY - 3, 55, 4);
+  if (tamilLeftImg) doc.addImage(tamilLeftImg, "PNG", margin, headerTextY + 1.5, 55, 4);
+
+  // English (Latin stays native)
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8);
+  doc.text("Rajarata University of Sri Lanka", margin, headerTextY + 9, { align: "left" });
+
+
+  // Right Side: Mihinthale Location Details
+  const sinhalaRightImg = renderComplexTextToDataURL("මිහින්තලේ, ශ්‍රී ලංකාව", "Abhaya Libre", 36, false, 'right');
+  const tamilRightImg = renderComplexTextToDataURL("மிஹிந்தலே, இலங்கை", "Pavanam", 32, false, 'right');
+
+  if (sinhalaRightImg) doc.addImage(sinhalaRightImg, "PNG", W - margin - 55, headerTextY - 3, 55, 4);
+  if (tamilRightImg) doc.addImage(tamilRightImg, "PNG", W - margin - 55, headerTextY + 1.5, 55, 4);
+
+  // English
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  doc.text("Mihinthale Sri Lanka", W - margin, headerTextY + 9, { align: "right" });
+
+  y = 39; // Secure spacing beneath logo baseline bounds
+
+  // Header divider
+  doc.setDrawColor(0);
+  doc.setLineWidth(0.4);
+  doc.line(margin, y, W - margin, y);
+  y += 4;
+
+  // Tel / Fax Info Row
+  doc.setFontSize(7.5);
+  doc.setFont("helvetica", "normal");
+  doc.text("Tel: +94 25 226 5600  |  Fax: +94 25 226 5601  |  Email: registrar@rjt.ac.lk", W / 2, y, { align: "center" });
+  y += 4;
+
+  doc.line(margin, y, W - margin, y);
+  y += 7;
+
+  // ── REFERENCE COLUMNS (Strict Grid Structure) ──
+  doc.setFontSize(9);
+  const refLeft = margin;
+  const refRight = W / 2 + 14;
+  const labelW = 28;
+
+  // Row 1
+  doc.setFont("helvetica", "bold");
+  doc.text("Your Number:", refLeft, y);
+  doc.text("My Number:", refRight, y);
+  doc.setFont("helvetica", "normal");
+  doc.text(inputs.yourNumber || ".....................", refLeft + labelW, y);
+  doc.text(inputs.myNumber || ".....................", refRight + labelW, y);
+  y += 5.5;
+
+  // Row 2
+  doc.setFont("helvetica", "bold");
+  doc.text("Our Ref:", refLeft, y);
+  doc.text("File Number:", refRight, y);
+  doc.setFont("helvetica", "normal");
+  doc.text(inputs.ourRef || ".....................", refLeft + labelW, y);
+  doc.text(inputs.fileNumber || ".....................", refRight + labelW, y);
+  y += 5.5;
+
+  // Row 3
+  doc.setFont("helvetica", "bold");
+  doc.text("Date:", refRight, y);
+  doc.setFont("helvetica", "normal");
+  const today = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+  doc.text(today, refRight + labelW, y);
+  y += 11;
+
+  // ── ADDRESSEE ──
+  const addressLines = (inputs.addressee || "").split("\n");
+  doc.setFontSize(9.5);
+  doc.setFont("helvetica", "normal");
+  for (const line of addressLines) {
+    doc.text(line, margin, y);
+    y += 5;
+  }
+  y += 2;
+
+  // ── SUBJECT (Dynamic wrap and underlines) ──
+  const subject = `Verification of Degree Certificate - ${student.name_with_initials}`;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9.5);
+  doc.text("Subject: ", margin, y);
+  
+  const subjectX = margin + doc.getTextWidth("Subject: ");
+  const maxSubjectW = W - margin - subjectX;
+  const wrappedSubject = doc.splitTextToSize(subject, maxSubjectW);
+  
+  doc.setFont("helvetica", "normal");
+  wrappedSubject.forEach((line: string, index: number) => {
+    doc.text(line, subjectX, y);
+    const lineW = doc.getTextWidth(line);
+    doc.line(subjectX, y + 0.5, subjectX + lineW, y + 0.5);
+    if (index < wrappedSubject.length - 1) y += 5;
+  });
+  y += 8;
+
+  // ── REFERENCE SENTENCE ──
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9.5);
+  const refDate = inputs.refLetterDate || "........................";
+  const refSentence = `This has reference to your letter ${refDate} on the above subject.`;
+  const refLines = doc.splitTextToSize(refSentence, contentWidth);
+  doc.text(refLines, margin, y);
+  y += refLines.length * 5 + 6;
+
+  // ── DETAIL FIELDS (Bounded Column Widths matching layout lines) ──
+  const fields: [string, string][] = [
+    ["Name of the Certificate", "Degree Certificate"],
+    ["Name in Full", student.full_name || student.name_with_initials || ""],
+    ["Degree", student.degree_name_en || ""],
+    ["Effective Date of the Degree", student.effective_date ? new Date(student.effective_date).toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" }) : (student.convocation_year || "")],
+    ["Graduation Date", (() => {
+      if (typeof convocationSessions === "undefined" || !student.session_number) return student.convocation_year || "";
+      const sess = convocationSessions.find((s: any) => s.session_number === student.session_number);
+      return sess?.session_date ? new Date(sess.session_date).toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" }) : (student.convocation_year || "");
+    })()],
+    ["Serial No. of the Certificate", student.certificate_number ? String(student.certificate_number) : ""],
+    ["Reg. NO / Index No.", `${student.registration_no || ""}  /  ${student.index_no || ""}`],
+    ["Final GPA & Class", `${student.gpa ? Number(student.gpa).toFixed(2) : " - "}${student.class ? " - " + student.class : ""}`],
+  ];
+
+  const col1Width = 62; 
+  const col2X = margin + col1Width; 
+  const col3X = col2X + 5; 
+  const maxValWidth = W - margin - col3X; // Rigid width clamp keeping values inside contentWidth boundary
+
+  doc.setFontSize(9.5);
+  fields.forEach(([label, value], i) => {
+    doc.setFont("helvetica", "bold");
+    doc.text(`${i + 1}.`, margin, y);
+    doc.text(label, margin + 6, y);
+    
+    doc.setFont("helvetica", "normal");
+    doc.text("-", col2X, y);
+    
+    const wrappedVal = doc.splitTextToSize(value, maxValWidth);
+    doc.text(wrappedVal, col3X, y);
+    
+    y += wrappedVal.length > 1 ? wrappedVal.length * 5.2 : 6.5;
+  });
+
+  y += 4;
+
+  // ── CLOSING ──
+  const closing = "I am pleased to inform you that the above information is Genuine and the Degree has been awarded by the Rajarata University of Sri Lanka.";
+  const closingLines = doc.splitTextToSize(closing, contentWidth);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9.5);
+  doc.text(closingLines, margin, y);
+  y += closingLines.length * 5 + 14;
+
+  // ── SIGNATURE ──
+  doc.setFont("helvetica", "normal");
+  doc.text(inputs.staffName || ".......................................................", margin, y);
+  y += 5.5;
+  doc.setFont("helvetica", "bold");
+  doc.text("Deputy Registrar", margin, y);
+
+  return doc.output("blob");
+};
 
   useEffect(() => {
     if (activeConvocationYear && !registryYear) {
@@ -7275,7 +7324,7 @@ export default function AdminDashboard() {
                     </div>
 
                     <div className="space-y-1">
-                      <Label className="text-[10px] uppercase font-bold text-slate-500">Addressee (press Enter for new line)</Label>
+                      <Label className="text-[10px] uppercase font-bold text-slate-500">Address of requestee</Label>
                       <textarea
                         value={verLetterInputs.addressee}
                         onChange={(e) => setVerLetterInputs((p) => ({ ...p, addressee: e.target.value }))}
@@ -7300,12 +7349,12 @@ export default function AdminDashboard() {
                       <p className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Student Data (auto-filled)</p>
                       <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
                         {[
-                          ["Name in Full", verLetterStudent.full_name || verLetterStudent.name_with_initials],
+                          ["Name in Full", verLetterStudent.name_with_initials],
                           ["Degree", verLetterStudent.degree_name_en],
                           ["Reg. No.", verLetterStudent.registration_no],
                           ["Index No.", verLetterStudent.index_no],
                           ["Certificate No.", verLetterStudent.certificate_number],
-                          ["GPA & Class", `${verLetterStudent.gpa ? Number(verLetterStudent.gpa).toFixed(2) : "-"} — ${verLetterStudent.degree_class || "-"}`],
+                          ["GPA & Class", `${verLetterStudent.gpa ? Number(verLetterStudent.gpa).toFixed(2) : "-"} — ${verLetterStudent.class || "-"}`],
                         ].map(([label, val]) => (
                           <div key={label as string} className="flex gap-1">
                             <span className="font-bold text-slate-600 dark:text-slate-400 shrink-0">{label}:</span>
