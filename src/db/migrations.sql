@@ -56,7 +56,7 @@ CREATE UNIQUE INDEX idx_active_convocation ON registration_windows(is_active) WH
 -- Module 4: Students Table
 CREATE TABLE students (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  index_no VARCHAR(100) NOT NULL,
+  index_no VARCHAR(100),
   nic_no VARCHAR(50) NOT NULL,
   registration_no VARCHAR(100) NOT NULL,
   email VARCHAR(255) NOT NULL,
@@ -66,7 +66,7 @@ CREATE TABLE students (
   degree_id UUID REFERENCES degrees(id) ON DELETE RESTRICT,
   address TEXT NOT NULL,
   contact_no VARCHAR(50) NOT NULL,
-  gpa NUMERIC(4, 2) NOT NULL,
+  gpa NUMERIC(4, 2),
   class VARCHAR(100) NOT NULL,
   
   -- Student Actions
@@ -192,6 +192,10 @@ CREATE TABLE convocation_sessions (
   id SERIAL PRIMARY KEY,
   session_number INT UNIQUE NOT NULL,
   session_name VARCHAR(255),
+  session_date VARCHAR(100),
+  session_time VARCHAR(100),
+  faculty_1 VARCHAR(255),
+  faculty_2 VARCHAR(255),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 

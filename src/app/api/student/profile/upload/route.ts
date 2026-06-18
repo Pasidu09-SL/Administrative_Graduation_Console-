@@ -110,7 +110,7 @@ export async function POST(req: Request) {
       fs.mkdirSync(UPLOAD_DIR, { recursive: true });
     }
 
-    const uniqueFilename = `${payload.index_no.replace(/[^a-zA-Z0-9]/g, '_')}_${type}_${Date.now()}${fileExt}`;
+    const uniqueFilename = `${payload.registration_no.replace(/[^a-zA-Z0-9]/g, '_')}_${type}_${Date.now()}${fileExt}`;
     const filePath = path.join(UPLOAD_DIR, uniqueFilename);
     
     const buffer = Buffer.from(await file.arrayBuffer());

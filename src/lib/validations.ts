@@ -27,13 +27,17 @@ export const studentSchema = z.object({
   email: z.string().email('Invalid email address'),
   gpa: z.preprocess(
     (val) => {
-      if (typeof val === 'string') {
-        const parsed = parseFloat(val);
-        return isNaN(parsed) ? val : parsed;
-      }
-      return val;
+      if (val === undefined || val === null) return undefined;
+      const strVal = String(val).trim();
+      if (strVal === "") return undefined;
+      if (strVal === "-") return "-";
+      const parsed = parseFloat(strVal);
+      return isNaN(parsed) ? strVal : parsed;
     },
-    z.number({ message: 'GPA must be a number' }).min(0).max(4.0)
+    z.union([
+      z.literal("-"),
+      z.number({ message: "GPA must be a number" }).min(0).max(4.0)
+    ], { errorMap: () => ({ message: "GPA is required and must be a number or \"-\"" }) })
   ),
   class: z.string().min(1, 'Class is required'),
 });

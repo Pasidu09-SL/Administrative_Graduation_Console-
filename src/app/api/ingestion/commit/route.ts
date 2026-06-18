@@ -43,12 +43,15 @@ export async function POST(req: Request) {
           class: classVal,
         } = row;
 
-        const magicToken = signMagicToken(email, index_no, activeYear);
+        const dbIndexNo = index_no === '-' ? null : index_no;
+        const dbGpa = gpa === '-' ? null : parseFloat(gpa);
+
+        const magicToken = signMagicToken(email, registration_no, activeYear);
         const magicLink = `${origin}/api/student/auth/magic-login?email=${encodeURIComponent(email.toLowerCase().trim())}&token=${encodeURIComponent(magicToken)}`;
 
         notifications.push({
           email,
-          index_no,
+          index_no: dbIndexNo,
           name: name_with_initials,
           magicLink
         });
@@ -61,14 +64,14 @@ export async function POST(req: Request) {
           name_with_initials,
           full_name,
           registration_no,
-          index_no,
+          dbIndexNo,
           nic_no,
           faculty,
           degreeId,
           address,
           contact_no,
           email,
-          parseFloat(gpa),
+          dbGpa,
           classVal,
           magicToken,
           activeYear
@@ -82,8 +85,8 @@ export async function POST(req: Request) {
           name_with_initials, full_name, registration_no, index_no, nic_no, faculty, degree_id, address, contact_no, email, gpa, class, magic_token, convocation_year
         )
         VALUES ${placeholders.join(', ')}
-        ON CONFLICT (index_no, convocation_year) DO UPDATE SET
-          registration_no = EXCLUDED.registration_no,
+        ON CONFLICT (registration_no, convocation_year) DO UPDATE SET
+          index_no = EXCLUDED.index_no,
           nic_no = EXCLUDED.nic_no,
           email = EXCLUDED.email,
           name_with_initials = EXCLUDED.name_with_initials,

@@ -162,7 +162,7 @@ export async function POST(req: Request) {
 
         // Dispatch correction alert email via Brevo
         const { origin } = new URL(req.url);
-        const token = signMagicToken(student.email, student.index_no, student.convocation_year);
+        const token = signMagicToken(student.email, student.registration_no, student.convocation_year);
         const correctionUrl = `${origin}/?email=${encodeURIComponent(student.email)}&token=${token}`;
         try {
           const tempRes = await client.query('SELECT subject, body FROM email_templates WHERE template_key = $1', ['rejection']);

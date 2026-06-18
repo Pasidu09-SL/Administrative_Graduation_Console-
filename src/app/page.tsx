@@ -12,7 +12,7 @@ import { GraduationCap, ShieldCheck, Mail, KeyRound, Loader2, X, AlertCircle, Ch
 export default function EntryPage() {
   const router = useRouter();
   const [email, setEmail] = useState('');
-  const [indexNo, setIndexNo] = useState('');
+  const [registrationNo, setRegistrationNo] = useState('');
   const [nicNo, setNicNo] = useState('');
   const [token, setToken] = useState('');
   
@@ -21,17 +21,29 @@ export default function EntryPage() {
   const [info, setInfo] = useState<string | null>(null);
   const [isEmailLocked, setIsEmailLocked] = useState(false);
   const [isTokenMissing, setIsTokenMissing] = useState(false);
+  const [isPortalClosed, setIsPortalClosed] = useState(false);
   const [hasToken, setHasToken] = useState<boolean | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const emailParam = params.get('email');
     const tokenParam = params.get('token');
+    const errorParam = params.get('error');
     
+    let portalClosed = false;
+    if (errorParam === 'Portal Closed') {
+      portalClosed = true;
+      setIsPortalClosed(true);
+    }
+
     if (!tokenParam) {
       setHasToken(true);
       setIsTokenMissing(true);
-      setError('Secure Access Required: Please click the unique magic link sent to your email.');
+      if (portalClosed) {
+        setError('Portal Closed: Registration access is currently inactive outside the configured timeline.');
+      } else {
+        setError('Secure Access Required: Please click the unique magic link sent to your email.');
+      }
       return;
     }
 
@@ -43,7 +55,6 @@ export default function EntryPage() {
     setIsTokenMissing(false);
     setHasToken(true);
 
-    const errorParam = params.get('error');
     if (errorParam) {
       setError(errorParam);
     }
@@ -74,7 +85,7 @@ export default function EntryPage() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !indexNo || !nicNo || !token) return;
+    if (!email || !registrationNo || !nicNo || !token) return;
     
     setLoading(true);
     setError(null);
@@ -84,7 +95,7 @@ export default function EntryPage() {
       const res = await fetch('/api/student/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, index_no: indexNo, nic_no: nicNo, token }),
+        body: JSON.stringify({ email, registration_no: registrationNo, nic_no: nicNo, token }),
       });
 
       const data = await res.json();
@@ -194,12 +205,20 @@ export default function EntryPage() {
             <CardHeader className="space-y-1 pb-6">
               <CardTitle className="text-xl font-extrabold text-slate-900 dark:text-white">Student Authenticator</CardTitle>
               <CardDescription className="text-xs text-slate-500 dark:text-slate-400">
-                Verify index number and secure MFA verification.
+                Verify registration number and secure MFA verification.
               </CardDescription>
             </CardHeader>
 
             <CardContent>
-              {isTokenMissing && (
+              {isPortalClosed ? (
+                <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 text-red-700 dark:text-red-400 rounded-xl text-xs font-bold flex items-start gap-2">
+                  <AlertCircle className="h-4 w-4 text-red-600 dark:text-red-500 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="block font-black uppercase text-[10px] tracking-wider text-red-655 dark:text-red-450 mb-1">Portal Closed</span>
+                    Registration access is currently inactive outside the configured timeline. Please contact the Exam Division if you require assistance.
+                  </div>
+                </div>
+              ) : isTokenMissing ? (
                 <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 text-red-700 dark:text-red-400 rounded-xl text-xs font-bold flex items-start gap-2">
                   <AlertCircle className="h-4 w-4 text-red-600 dark:text-red-500 shrink-0 mt-0.5" />
                   <div>
@@ -207,7 +226,7 @@ export default function EntryPage() {
                     To log in, please click the secure link sent to your university email. If you haven't received it, contact the Exam Division.
                   </div>
                 </div>
-              )}
+              ) : null}
                 <form onSubmit={handleLogin} className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="email" className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
@@ -234,16 +253,16 @@ export default function EntryPage() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="indexNo" className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
-                      Student Index Number
+                    <Label htmlFor="registrationNo" className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
+                      Student Registration Number
                     </Label>
                     <div className="relative">
                       <Input
-                        id="indexNo"
+                        id="registrationNo"
                         type="text"
-                        placeholder="22001015"
-                        value={indexNo}
-                        onChange={(e) => setIndexNo(e.target.value)}
+                        placeholder="2022/CS/101"
+                        value={registrationNo}
+                        onChange={(e) => setRegistrationNo(e.target.value)}
                         required
                         disabled={isTokenMissing}
                         className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl pl-10 text-sm h-11 disabled:opacity-75"

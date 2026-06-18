@@ -391,6 +391,7 @@ export default function AdminDashboard() {
   const [dispatchType, setDispatchType] = useState<"onboarding" | "confirmation">("onboarding");
   const [dispatchFacultyFilter, setDispatchFacultyFilter] = useState("");
   const [dispatchDegreeFilter, setDispatchDegreeFilter] = useState("");
+  const [dispatchSearchRegNo, setDispatchSearchRegNo] = useState("");
 
   const [showAddDegreeModal, setShowAddDegreeModal] = useState(false);
 
@@ -682,6 +683,7 @@ export default function AdminDashboard() {
       if (ingestSearchIndex) {
         const query = ingestSearchIndex.toLowerCase().trim();
         return (
+          (s.registration_no || "").toLowerCase().includes(query) ||
           (s.index_no || "").toLowerCase().includes(query) ||
           (s.full_name || "").toLowerCase().includes(query) ||
           (s.name_with_initials || "").toLowerCase().includes(query)
@@ -893,13 +895,19 @@ export default function AdminDashboard() {
         !dispatchFacultyFilter || s.faculty === dispatchFacultyFilter;
       const matchDegree =
         !dispatchDegreeFilter || s.degree_id === dispatchDegreeFilter;
-      return matchFaculty && matchDegree;
+      const matchSearch =
+        !dispatchSearchRegNo ||
+        (s.registration_no || "")
+          .toLowerCase()
+          .includes(dispatchSearchRegNo.toLowerCase().trim());
+      return matchFaculty && matchDegree && matchSearch;
     });
   }, [
     dispatcherStudents,
     dispatchType,
     dispatchFacultyFilter,
     dispatchDegreeFilter,
+    dispatchSearchRegNo,
   ]);
 
   useEffect(() => {
@@ -911,7 +919,7 @@ export default function AdminDashboard() {
       (s) =>
         s.verification_status === "Approved" &&
         s.session_number !== null &&
-        s.seat_number !== null &&
+        (s.seat_number !== null || s.attending_convocation === false) &&
         s.certificate_number !== null &&
         s.email_sent === true
     );
@@ -3221,7 +3229,7 @@ export default function AdminDashboard() {
                       <Input
                         value={ingestSearchIndex}
                         onChange={(e) => setIngestSearchIndex(e.target.value)}
-                        placeholder="Search by index, name..."
+                        placeholder="Search by reg, index, name..."
                         className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-slate-850 dark:text-slate-100 text-xs rounded-lg pl-9 h-8 placeholder-slate-400 dark:placeholder-slate-600"
                       />
                     </div>
@@ -3268,7 +3276,7 @@ export default function AdminDashboard() {
                             />
                           </TableHead>
                           <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3 text-xs w-48">
-                            Index & Registration No
+                            Registration & Index No
                           </TableHead>
                           <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3 text-xs">
                             Full Name & NIC
@@ -3310,10 +3318,10 @@ export default function AdminDashboard() {
                               </TableCell>
                               <TableCell className="px-4 py-3 font-mono text-xs">
                                 <div className="font-bold text-slate-850 dark:text-white">
-                                  {st.index_no}
+                                  {st.registration_no}
                                 </div>
                                 <div className="text-[10px] text-slate-500 dark:text-slate-500 mt-0.5">
-                                  {st.registration_no}
+                                  {st.index_no || '-'}
                                 </div>
                               </TableCell>
                               <TableCell className="px-4 py-3 text-xs">
@@ -3437,6 +3445,16 @@ export default function AdminDashboard() {
                         ))}
                     </select>
 
+                    <div className="w-full sm:w-60 relative">
+                      <Search className="absolute left-2.5 top-2.5 h-3 w-3 text-slate-450" />
+                      <Input
+                        value={dispatchSearchRegNo}
+                        onChange={(e) => setDispatchSearchRegNo(e.target.value)}
+                        placeholder="Search by reg no..."
+                        className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-slate-850 dark:text-slate-100 text-xs rounded-lg pl-8 h-8 placeholder-slate-400 dark:placeholder-slate-600"
+                      />
+                    </div>
+
                     <Button
                       variant="outline"
                       onClick={() => {
@@ -3469,7 +3487,7 @@ export default function AdminDashboard() {
                             Student Name
                           </TableHead>
                           <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">
-                            Index No
+                            Registration No
                           </TableHead>
                           <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">
                             Faculty
@@ -3538,7 +3556,7 @@ export default function AdminDashboard() {
                                   {student.name_with_initials}
                                 </TableCell>
                                 <TableCell className="px-4 py-2.5 text-slate-900 dark:text-white font-mono">
-                                  {student.index_no}
+                                  {student.registration_no}
                                 </TableCell>
                                 <TableCell className="px-4 py-2.5 text-slate-550 dark:text-slate-400">
                                   {student.faculty}
@@ -4123,21 +4141,6 @@ export default function AdminDashboard() {
                               </span>
                               <span
                                 className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${
-                                  st.attending_convocation === true
-                                    ? "bg-blue-500/15 text-blue-600 dark:text-blue-400"
-                                    : st.attending_convocation === false
-                                      ? "bg-slate-500/15 text-slate-500 dark:text-slate-400"
-                                      : "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400"
-                                }`}
-                              >
-                                {st.attending_convocation === true
-                                  ? "Attending"
-                                  : st.attending_convocation === false
-                                    ? "In Absentia"
-                                    : "Undecided"}
-                              </span>
-                              <span
-                                className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${
                                   st.verification_status === "Approved"
                                     ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
                                     : st.verification_status ===
@@ -4156,7 +4159,7 @@ export default function AdminDashboard() {
                             </div>
                           </div>
                           <div className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">
-                            {st.index_no}
+                            {st.registration_no}
                           </div>
                         </div>
                       ))}
@@ -4250,7 +4253,7 @@ export default function AdminDashboard() {
                                 GPA
                               </span>
                               <span className="text-xs font-semibold text-slate-800 dark:text-slate-300 block">
-                                {selectedStudent.gpa}
+                                {selectedStudent.gpa !== null && selectedStudent.gpa !== undefined ? selectedStudent.gpa : "-"}
                               </span>
                             </div>
 
@@ -6370,7 +6373,7 @@ export default function AdminDashboard() {
                                   {st.name_with_initials}
                                 </div>
                                 <div className="text-[10px] text-slate-550 dark:text-slate-400 font-mono mt-0.5">
-                                  Index: {st.index_no} | Reg:{" "}
+                                  Index: {st.index_no || "-"} | Reg:{" "}
                                   {st.registration_no} | NIC: {st.nic_no}
                                 </div>
                               </TableCell>
@@ -6389,7 +6392,7 @@ export default function AdminDashboard() {
                               </TableCell>
                               {/* Seating Info */}
                               <TableCell className="px-4 py-2.5 font-mono font-bold text-slate-700 dark:text-slate-350">
-                                Session {st.session_number} | Seat {st.seat_number}
+                                Session {st.session_number} | Seat {st.seat_number !== null && st.seat_number !== undefined ? st.seat_number : "-"}
                               </TableCell>
                               {/* Verification & Attendance */}
                               <TableCell className="px-4 py-2.5 space-y-1">
@@ -6421,12 +6424,6 @@ export default function AdminDashboard() {
                                         ? "In Absentia"
                                         : "No Response"}
                                   </span>
-                                </div>
-                                <div className="text-[10px] text-slate-500">
-                                  Profile:{" "}
-                                  {st.attendance_confirmed
-                                    ? "Locked/Submitted"
-                                    : "Pending Confirmation"}
                                 </div>
                               </TableCell>
                               {/* Corrections */}

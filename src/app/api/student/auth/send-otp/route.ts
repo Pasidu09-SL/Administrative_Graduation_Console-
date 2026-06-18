@@ -5,47 +5,33 @@ import { sendEmail, getOtpTemplate, getTemplateData } from '@/lib/email';
 
 export async function POST(req: Request) {
   try {
-    const { email, index_no } = await req.json();
-    if (!email || !index_no) {
-      return NextResponse.json({ success: false, error: 'Email and Index Number are required.' }, { status: 400 });
+    const { email, registration_no } = await req.json();
+    if (!email || !registration_no) {
+      return NextResponse.json({ success: false, error: 'Email and Registration Number are required.' }, { status: 400 });
     }
 
-    // Check registration window status
-    const mockTime = req.headers.get('x-mock-time');
-    const { isOpen } = await isRegistrationWindowOpen(mockTime);
-    if (!isOpen) {
-      const hasBypass = await runAsAdmin(async (client) => {
-        const activeYearRes = await client.query(
-          "SELECT convocation_year FROM registration_windows WHERE is_active = TRUE LIMIT 1"
-        );
-        const activeYear = activeYearRes.rows[0]?.convocation_year || '2026';
-        const res = await client.query(
-          'SELECT timeline_bypass FROM students WHERE LOWER(email) = LOWER($1) AND index_no = $2 AND convocation_year = $3',
-          [email.trim(), index_no.trim(), activeYear]
-        );
-        return res.rows[0]?.timeline_bypass === true;
-      });
-
-      if (!hasBypass) {
-        return NextResponse.json({ success: false, error: 'Portal Closed', code: 'PORTAL_CLOSED' }, { status: 403 });
-      }
-    }
-
-    // Verify student details (case-insensitive for email, strict for index number)
+    // Verify student details (case-insensitive for email, strict for registration number)
     const student = await runAsAdmin(async (client) => {
       const activeYearRes = await client.query(
         "SELECT convocation_year FROM registration_windows WHERE is_active = TRUE LIMIT 1"
       );
       const activeYear = activeYearRes.rows[0]?.convocation_year || '2026';
       const res = await client.query(
-        'SELECT id FROM students WHERE LOWER(email) = LOWER($1) AND index_no = $2 AND convocation_year = $3',
-        [email.trim(), index_no.trim(), activeYear]
+        'SELECT id, timeline_bypass FROM students WHERE LOWER(email) = LOWER($1) AND registration_no = $2 AND convocation_year = $3',
+        [email.trim(), registration_no.trim(), activeYear]
       );
       return res.rows[0] || null;
     });
 
     if (!student) {
-      return NextResponse.json({ success: false, error: 'Student record not found or index mismatch.' }, { status: 401 });
+      return NextResponse.json({ success: false, error: 'Student record not found or registration number mismatch.' }, { status: 401 });
+    }
+
+    // Check registration window status
+    const mockTime = req.headers.get('x-mock-time');
+    const { isOpen } = await isRegistrationWindowOpen(mockTime);
+    if (!isOpen && !student.timeline_bypass) {
+      return NextResponse.json({ success: false, error: 'Portal Closed', code: 'PORTAL_CLOSED' }, { status: 403 });
     }
 
     // Generate secure 6-digit OTP code

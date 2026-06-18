@@ -395,7 +395,7 @@ export default function StudentDashboard() {
             </div>
             <div className="space-y-1">
               <span className="text-[9px] uppercase font-bold text-slate-500 block">Index Number</span>
-              <span className="text-sm font-semibold text-slate-800 dark:text-slate-200">{profile.index_no}</span>
+              <span className="text-sm font-semibold text-slate-800 dark:text-slate-200">{profile.index_no || "-"}</span>
             </div>
 
             <div className="space-y-1">
@@ -478,7 +478,7 @@ export default function StudentDashboard() {
                 </div>
                 <div className="space-y-1.5 p-3.5 bg-slate-100/50 dark:bg-slate-950/40 rounded-xl border border-slate-200 dark:border-slate-900">
                   <span className="text-[10px] uppercase font-bold text-slate-500 block">Index No</span>
-                  <span className="text-sm font-semibold text-slate-900 dark:text-slate-200">{profile.index_no}</span>
+                  <span className="text-sm font-semibold text-slate-900 dark:text-slate-200">{profile.index_no || "-"}</span>
                 </div>
                 <div className="space-y-1.5 p-3.5 bg-slate-100/50 dark:bg-slate-950/40 rounded-xl border border-slate-200 dark:border-slate-900">
                   <span className="text-[10px] uppercase font-bold text-slate-500 block">Full Name</span>
@@ -492,7 +492,7 @@ export default function StudentDashboard() {
                   <span className="text-[10px] uppercase font-bold text-slate-500 block">Final GPA</span>
                   <span className="text-sm font-semibold text-slate-900 dark:text-slate-200 flex items-center gap-2">
                     <Award className="h-4 w-4 text-blue-500" />
-                    {profile.gpa}
+                    {profile.gpa !== null && profile.gpa !== undefined ? profile.gpa : "-"}
                   </span>
                 </div>
                 <div className="space-y-1.5 p-3.5 bg-slate-100/50 dark:bg-slate-950/40 rounded-xl border border-slate-200 dark:border-slate-900">

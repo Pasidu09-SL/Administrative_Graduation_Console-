@@ -436,13 +436,13 @@ async function runTests() {
     }
 
     // Attempt student login targeting mock student
-    const magicTokenTest5 = signMagicToken('student1@uni.ac.lk', 'INDEX-260001');
+    const magicTokenTest5 = signMagicToken('student1@uni.ac.lk', 'REG/2026/1001');
     const loginRes = await fetch(`${BASE_URL}/api/student/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         email: 'student1@uni.ac.lk',
-        index_no: 'INDEX-260001',
+        registration_no: 'REG/2026/1001',
         nic_no: 'NIC-260001',
         token: magicTokenTest5
       })
@@ -457,6 +457,29 @@ async function runTests() {
       }
     } else {
       throw new Error(`Boundary Test Failed! Allowed login outside window. Status: ${loginRes.status}`);
+    }
+
+    // Attempt student login with INCORRECT registration number while portal is closed
+    const loginResBadReg = await fetch(`${BASE_URL}/api/student/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'student1@uni.ac.lk',
+        registration_no: 'INCORRECT_REG',
+        nic_no: 'NIC-260001',
+        token: magicTokenTest5
+      })
+    });
+
+    if (loginResBadReg.status === 401) {
+      const badRegJson = await loginResBadReg.json();
+      if (badRegJson.error.includes('mismatch')) {
+        console.log('✓ Success: Student login rejected with 401 and credential mismatch error when invalid registration number entered while portal is closed.');
+      } else {
+        throw new Error(`Credential check failed! Expected mismatch error, got: ${JSON.stringify(badRegJson)}`);
+      }
+    } else {
+      throw new Error(`Credential check failed! Status should be 401 when invalid reg no entered, got: ${loginResBadReg.status}`);
     }
 
     // Restore timeline window to open for remaining tests
@@ -479,15 +502,15 @@ async function runTests() {
     
     // Acquire active session for Student 1
     const st1Email = 'student1@uni.ac.lk';
-    const st1Index = 'INDEX-260001';
+    const st1Reg = 'REG/2026/1001';
     const st1Nic = 'NIC-260001';
 
     // Verify credentials and capture the session cookie directly
-    const magicTokenTest6 = signMagicToken(st1Email, st1Index);
+    const magicTokenTest6 = signMagicToken(st1Email, st1Reg);
     const verifyRes = await fetch(`${BASE_URL}/api/student/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: st1Email, index_no: st1Index, nic_no: st1Nic, token: magicTokenTest6 })
+      body: JSON.stringify({ email: st1Email, registration_no: st1Reg, nic_no: st1Nic, token: magicTokenTest6 })
     });
 
     const cookieHeader = verifyRes.headers.get('set-cookie');
@@ -838,10 +861,10 @@ async function runTests() {
     console.log('\n[TEST 13] Running Student Magic Link Sign-in Test...');
     
     const testEmail = 'student1@uni.ac.lk';
-    const testIndex = 'INDEX-260001';
+    const testReg = 'REG/2026/1001';
     
     // Generate valid magic link token
-    const magicToken = signMagicToken(testEmail, testIndex);
+    const magicToken = signMagicToken(testEmail, testReg);
     
     // Attempt magic login request
     const magicLoginRes = await fetch(`${BASE_URL}/api/student/auth/magic-login?email=${encodeURIComponent(testEmail)}&token=${magicToken}`, {
@@ -981,7 +1004,7 @@ async function runTests() {
       [bypassIndex, deg1.id, bypassEmail]
     );
 
-    const bypassMagicToken = signMagicToken(bypassEmail, bypassIndex);
+    const bypassMagicToken = signMagicToken(bypassEmail, 'REG-777777');
 
     // Login should be rejected
     const blockLoginRes = await fetch(`${BASE_URL}/api/student/auth/login`, {
@@ -989,7 +1012,7 @@ async function runTests() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         email: bypassEmail,
-        index_no: bypassIndex,
+        registration_no: 'REG-777777',
         nic_no: '777777777V',
         token: bypassMagicToken
       })
@@ -1008,7 +1031,7 @@ async function runTests() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         email: bypassEmail,
-        index_no: bypassIndex,
+        registration_no: 'REG-777777',
         nic_no: '777777777V',
         token: bypassMagicToken
       })
@@ -1110,8 +1133,8 @@ async function runTests() {
 
     // 18d. Magic Link Extension: Generate magic link while 2026 is closed
     const linkEmail = 'student1@uni.ac.lk';
-    const linkIndex = 'INDEX-260001';
-    const linkMagicToken = signMagicToken(linkEmail, linkIndex);
+    const linkReg = 'REG/2026/1001';
+    const linkMagicToken = signMagicToken(linkEmail, linkReg);
 
     // Try to access magic login route: should fail/redirect back with error if portal is closed
     const testMagicClosedRes = await fetch(`${BASE_URL}/api/student/auth/magic-login?email=${encodeURIComponent(linkEmail)}&token=${linkMagicToken}`, {
@@ -1283,13 +1306,13 @@ async function runTests() {
       throw new Error(`Ingesting identical student under 2027 failed. Status: ${ingest2027Res.status}`);
     }
 
-    const magicToken2027 = signMagicToken('student1@uni.ac.lk', 'INDEX-260001', '2027');
+    const magicToken2027 = signMagicToken('student1@uni.ac.lk', 'REG/2026/1001', '2027');
     const login2027Res = await fetch(`${BASE_URL}/api/student/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         email: 'student1@uni.ac.lk',
-        index_no: 'INDEX-260001',
+        registration_no: 'REG/2026/1001',
         nic_no: 'NIC-260001',
         token: magicToken2027
       })

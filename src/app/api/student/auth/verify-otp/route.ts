@@ -4,30 +4,33 @@ import { isRegistrationWindowOpen, signToken } from '@/lib/auth';
 
 export async function POST(req: Request) {
   try {
-    const { email, index_no, code } = await req.json();
-    if (!email || !index_no || !code) {
-      return NextResponse.json({ success: false, error: 'Email, Index Number, and OTP Code are required.' }, { status: 400 });
+    const { email, registration_no, code } = await req.json();
+    if (!email || !registration_no || !code) {
+      return NextResponse.json({ success: false, error: 'Email, Registration Number, and OTP Code are required.' }, { status: 400 });
+    }
+
+    // Verify student details
+    const student = await runAsAdmin(async (client) => {
+      const activeYearRes = await client.query(
+        "SELECT convocation_year FROM registration_windows WHERE is_active = TRUE LIMIT 1"
+      );
+      const activeYear = activeYearRes.rows[0]?.convocation_year || '2026';
+      const res = await client.query(
+        'SELECT id, timeline_bypass FROM students WHERE LOWER(email) = LOWER($1) AND registration_no = $2 AND convocation_year = $3',
+        [email.trim(), registration_no.trim(), activeYear]
+      );
+      return res.rows[0] || null;
+    });
+
+    if (!student) {
+      return NextResponse.json({ success: false, error: 'Student record not found or registration number mismatch.' }, { status: 401 });
     }
 
     // Check registration window status
     const mockTime = req.headers.get('x-mock-time');
     const { isOpen } = await isRegistrationWindowOpen(mockTime);
-    if (!isOpen) {
-      const hasBypass = await runAsAdmin(async (client) => {
-        const activeYearRes = await client.query(
-          "SELECT convocation_year FROM registration_windows WHERE is_active = TRUE LIMIT 1"
-        );
-        const activeYear = activeYearRes.rows[0]?.convocation_year || '2026';
-        const res = await client.query(
-          'SELECT timeline_bypass FROM students WHERE LOWER(email) = LOWER($1) AND index_no = $2 AND convocation_year = $3',
-          [email.trim(), index_no.trim(), activeYear]
-        );
-        return res.rows[0]?.timeline_bypass === true;
-      });
-
-      if (!hasBypass) {
-        return NextResponse.json({ success: false, error: 'Portal Closed', code: 'PORTAL_CLOSED' }, { status: 403 });
-      }
+    if (!isOpen && !student.timeline_bypass) {
+      return NextResponse.json({ success: false, error: 'Portal Closed', code: 'PORTAL_CLOSED' }, { status: 403 });
     }
 
     const matchedOtp = await runAsAdmin(async (client) => {
@@ -58,7 +61,7 @@ export async function POST(req: Request) {
     });
 
     // Create session token
-    const token = signToken({ email: email.toLowerCase().trim(), index_no: index_no.trim() });
+    const token = signToken({ email: email.toLowerCase().trim(), registration_no: registration_no.trim() });
 
     const response = NextResponse.json({ success: true, message: 'OTP verified successfully.' });
     

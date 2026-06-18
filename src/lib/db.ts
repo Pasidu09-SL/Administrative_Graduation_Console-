@@ -222,6 +222,12 @@ export async function runMigrations() {
         ALTER TABLE students ADD COLUMN IF NOT EXISTS timeline_bypass BOOLEAN DEFAULT FALSE;
       `);
 
+      // Make index_no and gpa nullable
+      await client.query(`
+        ALTER TABLE students ALTER COLUMN index_no DROP NOT NULL;
+        ALTER TABLE students ALTER COLUMN gpa DROP NOT NULL;
+      `);
+
       // 5. Relax session constraint on students
       await client.query(`
         ALTER TABLE students DROP CONSTRAINT IF EXISTS students_session_number_check;
