@@ -11,11 +11,17 @@ export async function POST(req: Request) {
 
     const startTime = Date.now();
 
-    const activeYear = await runAsAdmin(async (client) => {
-      const activeYearRes = await client.query(
+    const activeYearRes = await runAsAdmin(async (client) => {
+      return await client.query(
         "SELECT convocation_year FROM registration_windows WHERE is_active = TRUE LIMIT 1"
       );
-      return activeYearRes.rows[0]?.convocation_year || '2026';
+    });
+    const activeYear = activeYearRes.rows[0]?.convocation_year || '2026';
+
+    const { degrees, sessions } = await runAsAdmin(async (client) => {
+      const degRes = await client.query("SELECT id, type, faculty FROM degrees");
+      const sessRes = await client.query("SELECT faculty_1, faculty_2, session_date FROM convocation_sessions");
+      return { degrees: degRes.rows, sessions: sessRes.rows };
     });
 
     const { origin } = new URL(req.url);
@@ -41,10 +47,19 @@ export async function POST(req: Request) {
           email,
           gpa,
           class: classVal,
+          effective_date,
         } = row;
 
         const dbIndexNo = index_no === '-' ? null : index_no;
         const dbGpa = gpa === '-' ? null : parseFloat(gpa);
+
+        const deg = degrees.find((d: any) => d.id === degreeId);
+        const degType = deg ? deg.type : 'Internal';
+        const groupName = degType === 'External' ? 'All External Degrees' : `${faculty} (Internal)`;
+        
+        // Find session date
+        const matchedSession = sessions.find((s: any) => s.faculty_1 === groupName || s.faculty_2 === groupName);
+        const graduationDate = matchedSession ? matchedSession.session_date : null;
 
         const magicToken = signMagicToken(email, registration_no, activeYear);
         const magicLink = `${origin}/api/student/auth/magic-login?email=${encodeURIComponent(email.toLowerCase().trim())}&token=${encodeURIComponent(magicToken)}`;
@@ -57,7 +72,7 @@ export async function POST(req: Request) {
         });
 
         placeholders.push(
-          `($${index}, $${index + 1}, $${index + 2}, $${index + 3}, $${index + 4}, $${index + 5}, $${index + 6}, $${index + 7}, $${index + 8}, $${index + 9}, $${index + 10}, $${index + 11}, $${index + 12}, $${index + 13})`
+          `($${index}, $${index + 1}, $${index + 2}, $${index + 3}, $${index + 4}, $${index + 5}, $${index + 6}, $${index + 7}, $${index + 8}, $${index + 9}, $${index + 10}, $${index + 11}, $${index + 12}, $${index + 13}, $${index + 14}::date, $${index + 15}::date)`
         );
 
         values.push(
@@ -74,15 +89,17 @@ export async function POST(req: Request) {
           dbGpa,
           classVal,
           magicToken,
-          activeYear
+          activeYear,
+          effective_date || null,
+          graduationDate || null
         );
         
-        index += 14;
+        index += 16;
       }
 
       const query = `
         INSERT INTO students (
-          name_with_initials, full_name, registration_no, index_no, nic_no, faculty, degree_id, address, contact_no, email, gpa, class, magic_token, convocation_year
+          name_with_initials, full_name, registration_no, index_no, nic_no, faculty, degree_id, address, contact_no, email, gpa, class, magic_token, convocation_year, effective_date, graduation_date
         )
         VALUES ${placeholders.join(', ')}
         ON CONFLICT (registration_no, convocation_year) DO UPDATE SET
@@ -98,6 +115,8 @@ export async function POST(req: Request) {
           gpa = EXCLUDED.gpa,
           class = EXCLUDED.class,
           magic_token = EXCLUDED.magic_token,
+          effective_date = EXCLUDED.effective_date,
+          graduation_date = EXCLUDED.graduation_date,
           updated_at = CURRENT_TIMESTAMP
       `;
 

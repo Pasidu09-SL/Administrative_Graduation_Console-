@@ -37,6 +37,92 @@ export async function POST(req: Request) {
       );
       const students = studRes.rows;
 
+      // 3. Fetch convocation sessions for building the table (if type is onboarding/magic_link)
+      let sessionDetailsTableHtml = "";
+      let portalValidityDays = "7"; // default fallback
+      if (type === 'onboarding' || type === 'magic_link') {
+        // Fetch portal open/close window to compute validity days
+        const windowRes = await client.query(
+          "SELECT open_date, close_date FROM registration_windows WHERE is_active = TRUE LIMIT 1"
+        );
+        if (windowRes.rows.length > 0) {
+          const { open_date, close_date } = windowRes.rows[0];
+          if (open_date && close_date) {
+            const openMs = new Date(open_date).getTime();
+            const closeMs = new Date(close_date).getTime();
+            const diffDays = Math.max(1, Math.round((closeMs - openMs) / (1000 * 60 * 60 * 24)));
+            portalValidityDays = String(diffDays);
+          }
+        }
+
+        const sessionsRes = await client.query('SELECT * FROM convocation_sessions ORDER BY session_number ASC');
+        const sessions = sessionsRes.rows;
+
+        const tableRows: string[] = [];
+        for (const sess of sessions) {
+          // Format date as "25th May 2026"
+          let dateStr = "TBD";
+          if (sess.session_date) {
+            const d = new Date(sess.session_date);
+            const day = d.getUTCDate();
+            const ordinal = (n: number) => {
+              if (n >= 11 && n <= 13) return n + "th";
+              switch (n % 10) { case 1: return n + "st"; case 2: return n + "nd"; case 3: return n + "rd"; default: return n + "th"; }
+            };
+            const monthName = d.toLocaleString("en-GB", { month: "long", timeZone: "UTC" });
+            const year = d.getUTCFullYear();
+            dateStr = `${ordinal(day)} ${monthName} ${year}`;
+          }
+          // Format time as "09.00 a.m." / "02.30 p.m."
+          let timeStr = "TBD";
+          if (sess.session_time) {
+            const [hStr, mStr] = sess.session_time.split(":");
+            let h = parseInt(hStr, 10);
+            const m = mStr ? mStr.substring(0, 2) : "00";
+            const period = h >= 12 ? "p.m." : "a.m.";
+            h = h % 12 || 12;
+            timeStr = `${String(h).padStart(2, "0")}.${m} ${period}`;
+          }
+
+          if (sess.faculty_1) {
+            tableRows.push(`
+              <tr>
+                <td style="border: 1px solid #ddd; padding: 8px;">Session ${sess.session_number}</td>
+                <td style="border: 1px solid #ddd; padding: 8px;">${sess.faculty_1}</td>
+                <td style="border: 1px solid #ddd; padding: 8px;">${dateStr}</td>
+                <td style="border: 1px solid #ddd; padding: 8px;">${timeStr}</td>
+              </tr>
+            `);
+          }
+          if (sess.faculty_2) {
+            tableRows.push(`
+              <tr>
+                <td style="border: 1px solid #ddd; padding: 8px;">Session ${sess.session_number}</td>
+                <td style="border: 1px solid #ddd; padding: 8px;">${sess.faculty_2}</td>
+                <td style="border: 1px solid #ddd; padding: 8px;">${dateStr}</td>
+                <td style="border: 1px solid #ddd; padding: 8px;">${timeStr}</td>
+              </tr>
+            `);
+          }
+        }
+
+        sessionDetailsTableHtml = `
+          <table style="width: 100%; border-collapse: collapse; margin-top: 15px; margin-bottom: 15px; font-family: sans-serif; font-size: 13px;">
+            <thead>
+              <tr style="background-color: #f2f2f2; text-align: left;">
+                <th style="border: 1px solid #ddd; padding: 8px; font-weight: bold;">Session</th>
+                <th style="border: 1px solid #ddd; padding: 8px; font-weight: bold;">Faculty/Group</th>
+                <th style="border: 1px solid #ddd; padding: 8px; font-weight: bold;">Date</th>
+                <th style="border: 1px solid #ddd; padding: 8px; font-weight: bold;">Time</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tableRows.length > 0 ? tableRows.join('') : '<tr><td colspan="4" style="border: 1px solid #ddd; padding: 8px; text-align: center; color: #888;">No sessions scheduled yet.</td></tr>'}
+            </tbody>
+          </table>
+        `;
+      }
+
       if (type === 'confirmation') {
         const unallocated = students.filter(s => s.session_number === null);
         if (unallocated.length > 0) {
@@ -104,11 +190,15 @@ export async function POST(req: Request) {
             subject = customTemplate.subject;
             htmlContent = customTemplate.body
               .replace(/\{\{student_name\}\}/g, student.name_with_initials)
-              .replace(/\{\{magic_link_url\}\}/g, magicLink);
+              .replace(/\{\{magic_link_url\}\}/g, magicLink)
+              .replace(/\{\{session_details_table\}\}/g, sessionDetailsTableHtml)
+              .replace(/\{\{portal_validity_days\}\}/g, portalValidityDays);
           } else {
             htmlContent = await getMagicLinkTemplate(
               student.name_with_initials,
               magicLink,
+              sessionDetailsTableHtml,
+              portalValidityDays,
             );
           }
         }

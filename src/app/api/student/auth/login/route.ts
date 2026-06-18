@@ -11,25 +11,24 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: 'Registration Number and NIC Number are required.' }, { status: 400 });
     }
 
-    // Determine if we are doing a magic link login (compat) or direct login
-    let targetEmail = email;
-    let magicExpiry: number | undefined;
-
-    if (token) {
-      // Compat: Verify magic token signature and expiration
-      const payload = verifyMagicToken(token);
-      if (!payload) {
-        return NextResponse.json({ success: false, error: 'Your registration link is invalid or has expired. Please request a new link from the Exam Division.' }, { status: 401 });
-      }
-
-      // Ensure the token's email and registration number match the login input
-      if (email && (payload.email.toLowerCase().trim() !== email.toLowerCase().trim() ||
-          payload.registration_no.trim() !== registration_no.trim())) {
-        return NextResponse.json({ success: false, error: 'Token credentials mismatch. Please use the unique link sent to your email.' }, { status: 401 });
-      }
-      targetEmail = payload.email;
-      magicExpiry = payload.exp;
+    if (!token || !email) {
+      return NextResponse.json({ success: false, error: 'Access denied. You must access this page using the unique link sent to your email.' }, { status: 401 });
     }
+
+    // Verify magic token signature and expiration
+    const payload = verifyMagicToken(token);
+    if (!payload) {
+      return NextResponse.json({ success: false, error: 'Your registration link is invalid or has expired. Please request a new link from the Exam Division.' }, { status: 401 });
+    }
+
+    // Ensure the token's email and registration number match the login input
+    if (payload.email.toLowerCase().trim() !== email.toLowerCase().trim() ||
+        payload.registration_no.trim() !== registration_no.trim()) {
+      return NextResponse.json({ success: false, error: 'Token credentials mismatch. Please use the unique link sent to your email.' }, { status: 401 });
+    }
+
+    let targetEmail = payload.email;
+    let magicExpiry = payload.exp;
 
     // Verify student details (case-insensitive for email if provided, strict for registration number and NIC)
     const student = await runAsAdmin(async (client) => {

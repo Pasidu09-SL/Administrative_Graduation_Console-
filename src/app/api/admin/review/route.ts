@@ -73,7 +73,7 @@ export async function GET(req: Request) {
         FROM students s
         LEFT JOIN degrees d ON s.degree_id = d.id
         ${whereClause}
-        ORDER BY s.index_no ASC
+        ORDER BY s.import_order ASC
       `;
 
       const res = await client.query(query, values);

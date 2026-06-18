@@ -5,8 +5,8 @@ import { getAdminSession } from '@/lib/auth';
 export async function GET() {
   try {
     const session = await getAdminSession();
-    if (!session) {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    if (!session || session.role !== 'Administrator') {
+      return NextResponse.json({ success: false, error: 'Unauthorized. Administrator role required.' }, { status: 401 });
     }
 
     const data = await runAsAdmin(async (client) => {

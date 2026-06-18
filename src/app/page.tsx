@@ -7,12 +7,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ThemeToggle } from '@/components/ThemeToggle';
-import { GraduationCap, ShieldCheck, KeyRound, Loader2, X, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { GraduationCap, ShieldCheck, KeyRound, Loader2, X, AlertCircle, CheckCircle2, Mail } from 'lucide-react';
 
 export default function EntryPage() {
   const router = useRouter();
   const [registrationNo, setRegistrationNo] = useState('');
   const [nicNo, setNicNo] = useState('');
+  const [email, setEmail] = useState('');
   const [token, setToken] = useState('');
   
   const [loading, setLoading] = useState(false);
@@ -27,6 +28,17 @@ export default function EntryPage() {
     
     if (tokenParam) {
       setToken(tokenParam);
+      try {
+        const parts = tokenParam.split('.');
+        if (parts[0]) {
+          const decoded = JSON.parse(atob(parts[0]));
+          if (decoded && decoded.email) {
+            setEmail(decoded.email);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to decode token client-side:", err);
+      }
     }
 
     if (errorParam === 'Portal Closed') {
@@ -63,7 +75,7 @@ export default function EntryPage() {
       const res = await fetch('/api/student/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ registration_no: registrationNo, nic_no: nicNo, token }),
+        body: JSON.stringify({ registration_no: registrationNo, nic_no: nicNo, token, email }),
       });
 
       const data = await res.json();
@@ -187,7 +199,35 @@ export default function EntryPage() {
                   </div>
                 </div>
               ) : null}
+
+              {!token && (
+                <div className="mb-4 p-3 bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-450 rounded-xl text-xs font-bold flex items-start gap-2">
+                  <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-500 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="block font-black uppercase text-[10px] tracking-wider text-amber-655 dark:text-amber-450 mb-1">Secure Link Required</span>
+                    Please use the unique registration link sent to your email to log in. Direct login is disabled.
+                  </div>
+                </div>
+              )}
+
                 <form onSubmit={handleLogin} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="email" className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
+                      Email Address
+                    </Label>
+                    <div className="relative">
+                      <Input
+                        id="email"
+                        type="email"
+                        placeholder="No valid token provided"
+                        value={email}
+                        readOnly
+                        className="bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 cursor-not-allowed rounded-xl pl-10 text-sm h-11"
+                      />
+                      <Mail className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-400 dark:text-slate-600" />
+                    </div>
+                  </div>
+
                   <div className="space-y-2">
                     <Label htmlFor="registrationNo" className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
                       Student Registration Number
@@ -226,7 +266,7 @@ export default function EntryPage() {
 
                   <Button
                     type="submit"
-                    disabled={loading}
+                    disabled={loading || !token || !email}
                     className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold h-11 rounded-xl mt-2 relative transition-colors shadow-lg shadow-blue-500/20 disabled:opacity-50"
                   >
                     {loading ? (

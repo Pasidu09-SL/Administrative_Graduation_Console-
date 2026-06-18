@@ -425,8 +425,34 @@ export default function AdminDashboard() {
   // Session Allocation workspace states
   const [sessAllocGroup, setSessAllocGroup] = useState("");
   const [sessAllocSession, setSessAllocSession] = useState("");
+  // ISO date string (YYYY-MM-DD) stored internally, displayed as "25th May 2026"
   const [sessAllocDate, setSessAllocDate] = useState("");
+  // 24h time string (HH:MM) stored internally, displayed as "09.00 a.m."
   const [sessAllocTime, setSessAllocTime] = useState("");
+
+  /** Format ISO date string to "25th May 2026" */
+  const formatSessionDate = (isoDate: string): string => {
+    if (!isoDate) return "";
+    const d = new Date(isoDate + "T00:00:00");
+    const day = d.getDate();
+    const ordinal = (n: number) => {
+      if (n >= 11 && n <= 13) return n + "th";
+      switch (n % 10) { case 1: return n + "st"; case 2: return n + "nd"; case 3: return n + "rd"; default: return n + "th"; }
+    };
+    const month = d.toLocaleString("en-GB", { month: "long" });
+    return `${ordinal(day)} ${month} ${d.getFullYear()}`;
+  };
+
+  /** Format 24h time string "HH:MM" to "09.00 a.m." */
+  const formatSessionTime = (time24: string): string => {
+    if (!time24) return "";
+    const [hStr, mStr] = time24.split(":");
+    let h = parseInt(hStr, 10);
+    const m = mStr ? mStr.substring(0, 2) : "00";
+    const period = h >= 12 ? "p.m." : "a.m.";
+    h = h % 12 || 12;
+    return `${String(h).padStart(2, "0")}.${m} ${period}`;
+  };
 
   const [showAddDegreeModal, setShowAddDegreeModal] = useState(false);
 
@@ -1440,8 +1466,7 @@ const generateVerificationLetterPDF = async (
     const validStudents = registryStudents.filter(
       (s) =>
         s.verification_status === "Approved" &&
-        s.session_number !== null &&
-        (s.seat_number !== null || s.attending_convocation === false) &&
+        (s.attending_convocation === false || (s.session_number !== null && s.seat_number !== null)) &&
         s.certificate_number !== null &&
         s.email_sent === true
     );
@@ -1551,8 +1576,23 @@ const generateVerificationLetterPDF = async (
       }
     };
 
-    doc.body.addEventListener("input", handleInput);
+        doc.body.addEventListener("input", handleInput);
     doc.addEventListener("click", handleClick);
+  };
+
+  const execEditorCommand = (command: string, value: string = "") => {
+    const iframe = iframeRef.current;
+    if (!iframe || !iframe.contentDocument) return;
+    const doc = iframe.contentDocument;
+    iframe.contentWindow?.focus();
+    doc.body.focus();
+    doc.execCommand(command, false, value);
+    let html = "";
+    if (doc.doctype) {
+      html += new XMLSerializer().serializeToString(doc.doctype) + "\n";
+    }
+    html += doc.documentElement.outerHTML;
+    setTemplateBody(html);
   };
 
   // Helper alerts trigger
@@ -2420,7 +2460,25 @@ const generateVerificationLetterPDF = async (
     }
   };
 
-  // 2. PARSE AND UPLOAD BULK STAGING DATA
+    // 2. PARSE AND UPLOAD BULK STAGING DATA
+  const parseExcelDate = (val: any) => {
+    if (val === undefined || val === null) return "";
+    if (val instanceof Date) {
+      const year = val.getFullYear();
+      const month = String(val.getMonth() + 1).padStart(2, '0');
+      const day = String(val.getDate()).padStart(2, '0');
+      return year + "-" + month + "-" + day;
+    }
+    if (typeof val === "number") {
+      const date = new Date(Math.round((val - 25569) * 86400 * 1000));
+      const year = date.getUTCFullYear();
+      const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(date.getUTCDate()).padStart(2, '0');
+      return year + "-" + month + "-" + day;
+    }
+    return String(val).trim();
+  };
+
   const handleIngestFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0] || null;
     setIngestFile(file);
@@ -2457,7 +2515,7 @@ const generateVerificationLetterPDF = async (
         const firstRow = data[0];
         const isHeader =
           firstRow &&
-          firstRow.some((cell) => {
+          firstRow.some((cell: any) => {
             if (typeof cell === "string") {
               const lower = cell.toLowerCase().trim();
               return [
@@ -2493,7 +2551,7 @@ const generateVerificationLetterPDF = async (
           // Skip completely empty rows
           if (
             r.every(
-              (cell) => cell === undefined || cell === null || cell === "",
+              (cell: any) => cell === undefined || cell === null || cell === "",
             )
           )
             continue;
@@ -2507,6 +2565,7 @@ const generateVerificationLetterPDF = async (
               r[3] !== undefined && r[3] !== null ? String(r[3]).trim() : "",
             index_no:
               r[4] !== undefined && r[4] !== null ? String(r[4]).trim() : "",
+            effective_date: parseExcelDate(r[5]),
             class:
               r[6] !== undefined && r[6] !== null ? String(r[6]).trim() : "",
             gpa:
@@ -2807,6 +2866,33 @@ const generateVerificationLetterPDF = async (
     }
   };
 
+  const handleClearAllAllocations = async () => {
+    if (!window.confirm("Are you sure you want to clear ALL session allocations? This will remove all group-to-session mappings.")) {
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch("/api/admin/convocation-sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "clear_all_allocations" }),
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        triggerAlert(true, "All session allocations have been cleared.");
+        loadConvocationSessions();
+        loadSessionAllocations();
+        loadStudents();
+      } else {
+        triggerAlert(false, json.error || "Failed to clear all allocations.");
+      }
+    } catch (err) {
+      triggerAlert(false, "Network error.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleTriggerSeatingAllocation = async (groupName: string) => {
     setLoading(true);
     try {
@@ -2974,11 +3060,14 @@ const generateVerificationLetterPDF = async (
                 <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-3 py-2">
                   Degree
                 </TableHead>
-                <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-3 py-2">
+                                <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-3 py-2">
                   GPA
                 </TableHead>
                 <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-3 py-2">
                   Class
+                </TableHead>
+                <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-3 py-2">
+                  Effective Date
                 </TableHead>
                 <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-3 py-2">
                   Errors
@@ -3032,8 +3121,13 @@ const generateVerificationLetterPDF = async (
                   >
                     {r.data.gpa}
                   </TableCell>
-                  <TableCell className="px-3 py-2 text-slate-700 dark:text-slate-300">
+                                    <TableCell className="px-3 py-2 text-slate-700 dark:text-slate-300">
                     {r.data.class}
+                  </TableCell>
+                  <TableCell
+                    className={r.errors.effective_date ? "text-red-600 dark:text-red-400 bg-red-500/5 dark:bg-red-950/20" : "text-slate-700 dark:text-slate-300"}
+                  >
+                    {r.data.effective_date}
                   </TableCell>
                   <TableCell className="px-3 py-2 text-red-650 dark:text-red-400 font-medium whitespace-normal break-words min-w-[250px]">
                     {Object.values(r.errors).join("; ")}
@@ -3884,17 +3978,26 @@ const generateVerificationLetterPDF = async (
                               className="rounded border-slate-300 dark:border-slate-800 text-blue-600 focus:ring-blue-500 h-3.5 w-3.5 cursor-pointer"
                             />
                           </TableHead>
-                          <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3 text-xs w-48">
+                                                    <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3 text-xs w-48">
                             Registration & Index No
                           </TableHead>
                           <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3 text-xs">
                             Full Name & NIC
                           </TableHead>
-                          <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3 text-xs w-48">
-                            Faculty
+                          <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3 text-xs">
+                            Email & Contact
                           </TableHead>
                           <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3 text-xs w-48">
-                            Degree Title
+                            Faculty & Degree
+                          </TableHead>
+                          <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3 text-xs text-center">
+                            GPA & Class
+                          </TableHead>
+                          <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3 text-xs">
+                            Address
+                          </TableHead>
+                          <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3 text-xs">
+                            Dates
                           </TableHead>
                           <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3 text-xs w-20 text-center">
                             Action
@@ -3904,7 +4007,7 @@ const generateVerificationLetterPDF = async (
                       <TableBody>
                         {filteredIngestStudents.length === 0 ? (
                           <TableRow>
-                            <TableCell colSpan={6} className="text-center py-8 text-slate-400 dark:text-slate-500 italic text-xs">
+                            <TableCell colSpan={9} className="text-center py-8 text-slate-400 dark:text-slate-500 italic text-xs">
                               No imported student records found matching the filters.
                             </TableCell>
                           </TableRow>
@@ -3941,11 +4044,28 @@ const generateVerificationLetterPDF = async (
                                   NIC: {st.nic_no}
                                 </div>
                               </TableCell>
-                              <TableCell className="px-4 py-3 text-xs text-slate-500 dark:text-slate-400">
-                                {st.faculty}
+                              <TableCell className="px-4 py-3 text-xs">
+                                <div className="text-slate-800 dark:text-slate-350 font-medium">{st.email}</div>
+                                <div className="text-[10px] text-slate-500 mt-0.5">{st.contact_no}</div>
                               </TableCell>
-                              <TableCell className="px-4 py-3 text-xs text-slate-500 dark:text-slate-400">
-                                {st.degree_name_en}
+                              <TableCell className="px-4 py-3 text-xs">
+                                <div className="font-semibold text-slate-800 dark:text-slate-300">{st.faculty}</div>
+                                <div className="text-[10px] text-slate-500 mt-0.5">{st.degree_name_en}</div>
+                              </TableCell>
+                              <TableCell className="px-4 py-3 text-xs text-center">
+                                <div className="font-bold text-slate-800 dark:text-slate-200">GPA: {st.gpa !== null && st.gpa !== undefined ? st.gpa : '-'}</div>
+                                <div className="text-[10px] text-slate-500 mt-0.5">{st.class || '-'}</div>
+                              </TableCell>
+                              <TableCell className="px-4 py-3 text-xs max-w-[200px] truncate" title={st.address}>
+                                {st.address}
+                              </TableCell>
+                              <TableCell className="px-4 py-3 text-xs whitespace-nowrap">
+                                <div className="text-[10px] text-slate-600 dark:text-slate-400">
+                                  <span className="font-semibold">Eff:</span> {st.effective_date ? st.effective_date.split('T')[0] : '-'}
+                                </div>
+                                <div className="text-[10px] text-slate-500 mt-0.5">
+                                  <span className="font-semibold">Grad:</span> {st.graduation_date ? st.graduation_date.split('T')[0] : '-'}
+                                </div>
                               </TableCell>
                               <TableCell className="px-4 py-3 text-center">
                                 <Button
@@ -4414,13 +4534,141 @@ const generateVerificationLetterPDF = async (
                         <Label className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">
                           Email Preview Editor
                         </Label>
-                        <div className="w-full border border-slate-200 dark:border-slate-900 rounded-xl overflow-hidden bg-white h-[550px] flex flex-col shadow-inner">
+                                                <div className="w-full border border-slate-200 dark:border-slate-900 rounded-xl overflow-hidden bg-white h-[550px] flex flex-col shadow-inner">
                           <div className="bg-slate-50 border-b border-slate-200 px-3 py-2 flex items-center justify-between">
                             <div className="flex items-center gap-1.5">
                               <span className="w-2.5 h-2.5 rounded-full bg-red-450" />
                               <span className="w-2.5 h-2.5 rounded-full bg-yellow-450" />
                               <span className="w-2.5 h-2.5 rounded-full bg-green-450" />
                             </div>
+                          </div>
+                          <div className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-3 py-1.5 flex flex-wrap items-center gap-1">
+                            {/* Text Formatting */}
+                            <button
+                              type="button"
+                              onClick={() => execEditorCommand("bold")}
+                              className="p-1 hover:bg-slate-200 dark:hover:bg-slate-800 rounded text-slate-700 dark:text-slate-300 font-bold text-xs min-w-6 h-6 flex items-center justify-center border border-slate-300 dark:border-slate-700"
+                              title="Bold"
+                            >
+                              B
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => execEditorCommand("italic")}
+                              className="p-1 hover:bg-slate-200 dark:hover:bg-slate-800 rounded text-slate-700 dark:text-slate-300 italic text-xs min-w-6 h-6 flex items-center justify-center border border-slate-300 dark:border-slate-700"
+                              title="Italic"
+                            >
+                              I
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => execEditorCommand("underline")}
+                              className="p-1 hover:bg-slate-200 dark:hover:bg-slate-800 rounded text-slate-700 dark:text-slate-300 underline text-xs min-w-6 h-6 flex items-center justify-center border border-slate-300 dark:border-slate-700"
+                              title="Underline"
+                            >
+                              U
+                            </button>
+                            <span className="w-px h-4 bg-slate-300 dark:bg-slate-700 mx-1" />
+                            
+                            {/* Color Picker */}
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="color"
+                                onChange={(e) => execEditorCommand("foreColor", e.target.value)}
+                                className="w-6 h-6 p-0 border border-slate-300 dark:border-slate-700 rounded cursor-pointer"
+                                title="Text Color"
+                              />
+                            </div>
+                            <span className="w-px h-4 bg-slate-300 dark:bg-slate-700 mx-1" />
+
+                            {/* Sub/Super */}
+                            <button
+                              type="button"
+                              onClick={() => execEditorCommand("superscript")}
+                              className="p-1 hover:bg-slate-200 dark:hover:bg-slate-800 rounded text-slate-700 dark:text-slate-300 text-[10px] min-w-6 h-6 flex items-center justify-center border border-slate-300 dark:border-slate-700"
+                              title="Superscript"
+                            >
+                              X<sup>2</sup>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => execEditorCommand("subscript")}
+                              className="p-1 hover:bg-slate-200 dark:hover:bg-slate-800 rounded text-slate-700 dark:text-slate-300 text-[10px] min-w-6 h-6 flex items-center justify-center border border-slate-300 dark:border-slate-700"
+                              title="Subscript"
+                            >
+                              X<sub>2</sub>
+                            </button>
+                            <span className="w-px h-4 bg-slate-300 dark:bg-slate-700 mx-1" />
+
+                            {/* Font Size Dropdown */}
+                            <select
+                              onChange={(e) => execEditorCommand("fontSize", e.target.value)}
+                              className="bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded text-xs px-1.5 py-0.5 h-6 text-slate-700 dark:text-slate-300 focus:outline-none"
+                              title="Font Size"
+                              defaultValue="3"
+                            >
+                              <option value="1">Extra Small</option>
+                              <option value="2">Small</option>
+                              <option value="3">Normal</option>
+                              <option value="4">Medium</option>
+                              <option value="5">Large</option>
+                              <option value="6">Extra Large</option>
+                              <option value="7">Huge</option>
+                            </select>
+                            <span className="w-px h-4 bg-slate-300 dark:bg-slate-700 mx-1" />
+
+                            {/* Alignments */}
+                            <button
+                              type="button"
+                              onClick={() => execEditorCommand("justifyLeft")}
+                              className="p-1 hover:bg-slate-200 dark:hover:bg-slate-800 rounded text-slate-700 dark:text-slate-300 text-xs min-w-6 h-6 flex items-center justify-center border border-slate-300 dark:border-slate-700"
+                              title="Align Left"
+                            >
+                              ⎹═
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => execEditorCommand("justifyCenter")}
+                              className="p-1 hover:bg-slate-200 dark:hover:bg-slate-800 rounded text-slate-700 dark:text-slate-300 text-xs min-w-6 h-6 flex items-center justify-center border border-slate-300 dark:border-slate-700"
+                              title="Align Center"
+                            >
+                              ═
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => execEditorCommand("justifyRight")}
+                              className="p-1 hover:bg-slate-200 dark:hover:bg-slate-800 rounded text-slate-700 dark:text-slate-300 text-xs min-w-6 h-6 flex items-center justify-center border border-slate-300 dark:border-slate-700"
+                              title="Align Right"
+                            >
+                              ═⎹
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => execEditorCommand("justifyFull")}
+                              className="p-1 hover:bg-slate-200 dark:hover:bg-slate-800 rounded text-slate-700 dark:text-slate-300 text-xs min-w-6 h-6 flex items-center justify-center border border-slate-300 dark:border-slate-700"
+                              title="Justify"
+                            >
+                              𝌆
+                            </button>
+                            <span className="w-px h-4 bg-slate-300 dark:bg-slate-700 mx-1" />
+
+                            {/* Lists */}
+                            <button
+                              type="button"
+                              onClick={() => execEditorCommand("insertUnorderedList")}
+                              className="p-1 hover:bg-slate-200 dark:hover:bg-slate-800 rounded text-slate-700 dark:text-slate-300 text-xs min-w-6 h-6 flex items-center justify-center border border-slate-300 dark:border-slate-700"
+                              title="Bullet List"
+                            >
+                              •=
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => execEditorCommand("insertOrderedList")}
+                              className="p-1 hover:bg-slate-200 dark:hover:bg-slate-800 rounded text-slate-700 dark:text-slate-300 text-xs min-w-6 h-6 flex items-center justify-center border border-slate-300 dark:border-slate-700"
+                              title="Numbered List"
+                            >
+                              1=
+                            </button>
                           </div>
                           <iframe
                             ref={iframeRef}
@@ -4992,79 +5240,7 @@ const generateVerificationLetterPDF = async (
                 </div>
               )}
 
-              {/* Immutable Audit Trail Section */}
-              <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-2xl shadow-sm">
-                <CardHeader>
-                  <CardTitle className="text-xs font-bold text-slate-950 dark:text-white uppercase tracking-wider">
-                    Immutable Audit Trail Logs
-                  </CardTitle>
-                </CardHeader>
-                <div className="border border-slate-200 dark:border-slate-900 rounded-xl overflow-hidden overflow-x-auto mx-4 my-4 ">
-                <CardContent className="p-0 overflow-hidden border-t border-slate-100 dark:border-slate-900">
-                  <Table className="text-xs">                
-                    <TableHeader className="bg-slate-100/50 dark:bg-slate-800">
-                      <TableRow className="border-b border-slate-200 dark:border-slate-900">
-                        <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">
-                          Timestamp
-                        </TableHead>
-                        <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">
-                          Actor (Admin)
-                        </TableHead>
-                        <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">
-                          Target Candidate
-                        </TableHead>
-                        <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">
-                          Action Recorded
-                        </TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody className="divide-y divide-slate-200 dark:divide-slate-900 font-medium">
-                      {auditLogs.length === 0 ? (
-                        <TableRow>
-                          <TableCell
-                            colSpan={4}
-                            className="text-center py-8 text-slate-500"
-                          >
-                            No actions logged yet.
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        auditLogs.map((log) => (
-                          <TableRow
-                            key={log.id}
-                            className="border-b border-slate-200 dark:border-slate-900 hover:bg-slate-100/30 dark:hover:bg-slate-900/10 transition-colors"
-                          >
-                            <TableCell className="px-4 py-2.5 text-slate-400 dark:text-slate-500 font-mono">
-                              {new Date(log.timestamp).toLocaleString()}
-                            </TableCell>
-                            <TableCell className="px-4 py-2.5 font-bold text-slate-900 dark:text-white">
-                              {log.admin_id}
-                            </TableCell>
-                            <TableCell className="px-4 py-2.5 text-slate-800 dark:text-slate-300">
-                              {log.student_id ? (
-                                <>
-                                  <div>{log.name_with_initials}</div>
-                                  <div className="text-[10px] text-slate-400 dark:text-slate-500 font-mono mt-0.5">
-                                    {log.index_no} | {log.email}
-                                  </div>
-                                </>
-                              ) : (
-                                <span className="text-slate-400 dark:text-slate-500 italic">
-                                  System Event
-                                </span>
-                              )}
-                            </TableCell>
-                            <TableCell className="px-4 py-2.5 text-slate-600 dark:text-slate-400 font-semibold">
-                              {log.action_taken}
-                            </TableCell>
-                          </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
-                </CardContent>
-                </div>
-              </Card>
+              
 
               {/* Rejection popup prompt */}
               {showRejectDialog && (
@@ -5159,15 +5335,29 @@ const generateVerificationLetterPDF = async (
                           onChange={(e) => setSessAllocGroup(e.target.value)}
                           className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-300 px-3 py-2 rounded-lg focus:outline-none"
                         >
-                          <option value="">Select Seating Group</option>
-                          {FACULTIES.map((fac) => (
-                            <option key={fac} value={`${fac} (Internal)`}>
-                              {fac} (Internal)
-                            </option>
-                          ))}
-                          <option value="All External Degrees">
-                            All External Degrees
-                          </option>
+                                                    <option value="">Select Seating Group</option>
+                          {FACULTIES.map((fac) => {
+                            const val = `${fac} (Internal)`;
+                            const isAllocated = convocationSessions.some(
+                              (s) => s.faculty_1 === val || s.faculty_2 === val
+                            );
+                            return (
+                              <option key={fac} value={val} disabled={isAllocated}>
+                                {isAllocated ? "✔ " : ""}{fac} (Internal)
+                              </option>
+                            );
+                          })}
+                          {(() => {
+                            const val = "All External Degrees";
+                            const isAllocated = convocationSessions.some(
+                              (s) => s.faculty_1 === val || s.faculty_2 === val
+                            );
+                            return (
+                              <option value={val} disabled={isAllocated}>
+                                {isAllocated ? "✔ " : ""}All External Degrees
+                              </option>
+                            );
+                          })()}
                         </select>
                       </div>
 
@@ -5198,15 +5388,19 @@ const generateVerificationLetterPDF = async (
                           htmlFor="sessAllocDateInput"
                           className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400"
                         >
-                          Session Date (e.g. 2026-07-25)
+                          Session Date
+                          {sessAllocDate && (
+                            <span className="ml-2 text-blue-600 dark:text-blue-400 normal-case font-semibold">
+                              — {formatSessionDate(sessAllocDate)}
+                            </span>
+                          )}
                         </Label>
-                        <Input
+                        <input
                           id="sessAllocDateInput"
-                          type="text"
+                          type="date"
                           value={sessAllocDate}
                           onChange={(e) => setSessAllocDate(e.target.value)}
-                          placeholder="e.g. 25th July 2026"
-                          className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 text-xs rounded-lg h-9"
+                          className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 text-xs rounded-lg h-9 px-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
                       </div>
 
@@ -5215,15 +5409,19 @@ const generateVerificationLetterPDF = async (
                           htmlFor="sessAllocTimeInput"
                           className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400"
                         >
-                          Session Time (e.g. 09:00 AM)
+                          Session Time
+                          {sessAllocTime && (
+                            <span className="ml-2 text-blue-600 dark:text-blue-400 normal-case font-semibold">
+                              — {formatSessionTime(sessAllocTime)}
+                            </span>
+                          )}
                         </Label>
-                        <Input
+                        <input
                           id="sessAllocTimeInput"
-                          type="text"
+                          type="time"
                           value={sessAllocTime}
                           onChange={(e) => setSessAllocTime(e.target.value)}
-                          placeholder="e.g. 09:00 AM"
-                          className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 text-xs rounded-lg h-9"
+                          className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 text-xs rounded-lg h-9 px-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
                       </div>
 
@@ -5245,13 +5443,27 @@ const generateVerificationLetterPDF = async (
 
                 {/* Session Slots Overview */}
                 <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-2xl lg:col-span-2 shadow-sm">
-                  <CardHeader>
-                    <CardTitle className="text-base font-bold text-slate-955 dark:text-white">
-                      Graduation Session Slots
-                    </CardTitle>
-                    <CardDescription className="text-[11px] text-slate-500">
-                      Overview of graduation sessions and mapped faculties.
-                    </CardDescription>
+                  <CardHeader className="flex flex-row items-start justify-between gap-4">
+                    <div>
+                      <CardTitle className="text-base font-bold text-slate-955 dark:text-white">
+                        Graduation Session Slots
+                      </CardTitle>
+                      <CardDescription className="text-[11px] text-slate-500">
+                        Overview of graduation sessions and mapped faculties.
+                      </CardDescription>
+                    </div>
+                    {convocationSessions.some((s: any) => s.faculty_1 || s.faculty_2) && (
+                      <button
+                        type="button"
+                        onClick={handleClearAllAllocations}
+                        disabled={loading}
+                        className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold rounded-lg bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-900/40 hover:bg-red-100 dark:hover:bg-red-950/40 transition disabled:opacity-50"
+                        title="Clear all session allocations"
+                      >
+                        <X className="h-3 w-3" />
+                        Clear All Allocations
+                      </button>
+                    )}
                   </CardHeader>
                   <CardContent className="space-y-4">
                     {convocationSessions.length === 0 ? (
@@ -5279,10 +5491,12 @@ const generateVerificationLetterPDF = async (
                               </div>
                               <div className="text-[10px] text-slate-500 space-y-0.5">
                                 <div>
-                                  <span className="font-semibold">Date:</span> {session.session_date || "Not configured"}
+                                  <span className="font-semibold">Date:</span>{" "}
+                                  {session.session_date ? formatSessionDate(session.session_date) : "Not configured"}
                                 </div>
                                 <div>
-                                  <span className="font-semibold">Time:</span> {session.session_time || "Not configured"}
+                                  <span className="font-semibold">Time:</span>{" "}
+                                  {session.session_time ? formatSessionTime(session.session_time) : "Not configured"}
                                 </div>
                               </div>
                             </div>
@@ -5379,7 +5593,7 @@ const generateVerificationLetterPDF = async (
                               {/* Session Badge */}
                               {hasSession ? (
                                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 border border-blue-100 dark:border-blue-900/50">
-                                  Session {group.sessionNumber} ({group.sessionDate} at {group.sessionTime})
+                                  Session {group.sessionNumber}{group.sessionDate ? ` · ${formatSessionDate(group.sessionDate)}` : ""}{group.sessionTime ? ` at ${formatSessionTime(group.sessionTime)}` : ""}
                                 </span>
                               ) : (
                                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400 border border-red-100 dark:border-red-950/30">
@@ -5411,16 +5625,21 @@ const generateVerificationLetterPDF = async (
                               across {group.degreeCount} academic programs.
                             </div>
 
-                            {/* Degrees list */}
+                                                        {/* Degrees list */}
                             {group.degrees.length > 0 && (
-                              <div className="flex flex-wrap gap-1.5 pt-1">
+                              <div className="flex flex-col gap-1.5 pt-2 max-w-md">
                                 {group.degrees.map((deg: any) => (
-                                  <span
+                                  <div
                                     key={deg.id}
-                                    className="text-[9px] font-bold px-2 py-0.5 bg-slate-50 dark:bg-slate-900 text-slate-600 dark:text-slate-400 rounded-md border border-slate-200 dark:border-slate-800/80"
+                                    className="flex items-center justify-between text-xs py-1 border-b border-slate-100 dark:border-slate-800/50"
                                   >
-                                    {deg.name}: {deg.attendingCount} Attending
-                                  </span>
+                                    <span className="text-slate-600 dark:text-slate-400 font-medium truncate mr-4">
+                                      {deg.name}
+                                    </span>
+                                    <span className="font-bold text-slate-800 dark:text-slate-300 bg-slate-50 dark:bg-slate-900 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-800 shrink-0 text-right min-w-[90px]">
+                                      {deg.attendingCount} Attending
+                                    </span>
+                                  </div>
                                 ))}
                               </div>
                             )}

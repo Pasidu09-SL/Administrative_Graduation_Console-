@@ -39,6 +39,7 @@ export const studentSchema = z.object({
     })
   ),
   class: z.string().min(1, 'Class is required'),
+  effective_date: z.string().min(1, 'Effective Date is required'),
 });
 
 // Module 3: Timeline validation schema

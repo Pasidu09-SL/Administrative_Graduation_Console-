@@ -767,13 +767,13 @@ async function runTests() {
       "SELECT MIN(CAST(certificate_number AS INTEGER)) as min_cert, MAX(CAST(certificate_number AS INTEGER)) as max_cert FROM students WHERE faculty = 'Faculty of Social Sciences & Humanities' AND convocation_year = '2026'"
     );
 
-    if (certsFac1.rows[0].min_cert !== 16041 || certsFac1.rows[0].max_cert !== 16290) {
-      throw new Error(`Expected Faculty 1 certificates to be 16041-16290, got: ${certsFac1.rows[0].min_cert}-${certsFac1.rows[0].max_cert}`);
+    if (certsFac1.rows[0].min_cert !== 20260001 || certsFac1.rows[0].max_cert !== 20260250) {
+      throw new Error(`Expected Faculty 1 certificates to be 20260001-20260250, got: ${certsFac1.rows[0].min_cert}-${certsFac1.rows[0].max_cert}`);
     }
-    if (certsFac2.rows[0].min_cert !== 16291 || certsFac2.rows[0].max_cert !== 16540) {
-      throw new Error(`Expected Faculty 2 certificates to be 16291-16540, got: ${certsFac2.rows[0].min_cert}-${certsFac2.rows[0].max_cert}`);
+    if (certsFac2.rows[0].min_cert !== 20260251 || certsFac2.rows[0].max_cert !== 20260500) {
+      throw new Error(`Expected Faculty 2 certificates to be 20260251-20260500, got: ${certsFac2.rows[0].min_cert}-${certsFac2.rows[0].max_cert}`);
     }
-    console.log("✓ Success: Certificate sequential numbering verified across sessions/faculties (16041-16290 and 16291-16540).");
+    console.log("✓ Success: Certificate sequential numbering verified across sessions/faculties (20260001-20260250 and 20260251-20260500).");
 
     // ----------------------------------------------------
     // Test 11: Asynchronous Queue Test (Certificates)

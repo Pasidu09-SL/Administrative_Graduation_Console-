@@ -2,6 +2,24 @@ import { NextResponse } from 'next/server';
 import { runAsAdmin } from '@/lib/db';
 import { getAdminSession } from '@/lib/auth';
 
+// Helper: build the graduation_date sync query
+const syncGraduationDatesQuery = `
+  UPDATE students s
+  SET graduation_date = (
+    SELECT cs.session_date::DATE
+    FROM convocation_sessions cs
+    WHERE (
+      (cs.faculty_1 = s.faculty || ' (Internal)' OR cs.faculty_2 = s.faculty || ' (Internal)')
+      AND (s.degree_id IS NULL OR s.degree_id IN (SELECT id FROM degrees WHERE type = 'Internal' OR type IS NULL))
+    ) OR (
+      (cs.faculty_1 = 'All External Degrees' OR cs.faculty_2 = 'All External Degrees')
+      AND s.degree_id IN (SELECT id FROM degrees WHERE type = 'External')
+    )
+    LIMIT 1
+  )
+  WHERE s.convocation_year = $1
+`;
+
 // GET: Fetch all convocation sessions
 export async function GET() {
   try {
@@ -21,7 +39,6 @@ export async function GET() {
   }
 }
 
-// POST: Add a new convocation session
 // POST: Add or allocate a convocation session
 export async function POST(req: Request) {
   try {
@@ -95,6 +112,14 @@ export async function POST(req: Request) {
         }
 
         const res = await client.query(updateQuery, params);
+
+        // Sync graduation dates for matching students
+        const activeYearRes = await client.query(
+          "SELECT convocation_year FROM registration_windows WHERE is_active = TRUE LIMIT 1"
+        );
+        const activeYear = activeYearRes.rows[0]?.convocation_year || "2026";
+        await client.query(syncGraduationDatesQuery, [activeYear]);
+
         return res.rows[0];
       });
 
@@ -113,9 +138,37 @@ export async function POST(req: Request) {
           SET faculty_1 = CASE WHEN faculty_1 = $1 THEN NULL ELSE faculty_1 END,
               faculty_2 = CASE WHEN faculty_2 = $1 THEN NULL ELSE faculty_2 END
         `, [groupName]);
+
+        // Sync graduation dates
+        const activeYearRes = await client.query(
+          "SELECT convocation_year FROM registration_windows WHERE is_active = TRUE LIMIT 1"
+        );
+        const activeYear = activeYearRes.rows[0]?.convocation_year || "2026";
+        await client.query(syncGraduationDatesQuery, [activeYear]);
       });
 
       return NextResponse.json({ success: true, message: `Cleared session allocation for ${groupName}.` });
+    }
+
+    if (action === "clear_all_allocations") {
+      await runAsAdmin(async (client) => {
+        await client.query(`
+          UPDATE convocation_sessions 
+          SET faculty_1 = NULL, faculty_2 = NULL
+        `);
+
+        // Sync graduation dates (all will become NULL since no sessions are mapped)
+        const activeYearRes = await client.query(
+          "SELECT convocation_year FROM registration_windows WHERE is_active = TRUE LIMIT 1"
+        );
+        const activeYear = activeYearRes.rows[0]?.convocation_year || "2026";
+        await client.query(
+          "UPDATE students SET graduation_date = NULL WHERE convocation_year = $1",
+          [activeYear]
+        );
+      });
+
+      return NextResponse.json({ success: true, message: 'All session allocations cleared.' });
     }
 
     // Default: Add a new convocation session
@@ -176,6 +229,13 @@ export async function DELETE(req: Request) {
       }
 
       await client.query('DELETE FROM convocation_sessions WHERE id = $1', [id]);
+
+      // Sync graduation dates
+      const activeYearRes = await client.query(
+        "SELECT convocation_year FROM registration_windows WHERE is_active = TRUE LIMIT 1"
+      );
+      const activeYear = activeYearRes.rows[0]?.convocation_year || "2026";
+      await client.query(syncGraduationDatesQuery, [activeYear]);
     });
 
     return NextResponse.json({ success: true, message: 'Session deleted successfully.' });

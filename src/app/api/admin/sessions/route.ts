@@ -284,16 +284,30 @@ export async function POST(req: Request) {
         );
       }
 
-      // 5. Query maximum existing integer certificate number globally (checking for numbers >= 16041)
+      // 5. Query maximum existing 8-digit certificate number matching activeYear (e.g. '2026%')
       const maxCertRes = await client.query(
-        `SELECT MAX(CAST(certificate_number AS INTEGER)) as max_cert 
+        `SELECT certificate_number 
          FROM students 
-         WHERE certificate_number ~ '^[0-9]+$'`,
+         WHERE convocation_year = $1 AND certificate_number LIKE $2
+         ORDER BY certificate_number DESC LIMIT 1`,
+        [activeYear, `${activeYear}%`]
       );
-      const maxCertVal = maxCertRes.rows[0]?.max_cert;
-      let nextCertNo = maxCertVal
-        ? Math.max(parseInt(maxCertVal, 10) + 1, 16041)
-        : 16041;
+      
+      let nextSeq = 1;
+      const maxCertRow = maxCertRes.rows[0];
+      if (maxCertRow && maxCertRow.certificate_number) {
+        const lastCert = maxCertRow.certificate_number.trim();
+        if (lastCert.length === 8 && lastCert.startsWith(activeYear)) {
+          const seqStr = lastCert.substring(4);
+          const parsedSeq = parseInt(seqStr, 10);
+          if (!isNaN(parsedSeq)) {
+            nextSeq = parsedSeq + 1;
+          }
+        }
+      }
+
+      // Helper function to pad sequence with zeros to 4 digits
+      const padSeq = (seq: number) => String(seq).padStart(4, "0");
 
       // 6. Sequentially allocate seating and certificate numbers (using bulk UPDATE for performance)
       if (studentsList.length > 0) {
@@ -302,18 +316,19 @@ export async function POST(req: Request) {
         let pIndex = 1;
 
         studentsList.forEach((student: any) => {
-          const certNo = String(nextCertNo);
+          const certNo = `${activeYear}${padSeq(nextSeq)}`;
           const isAttending = student.attending_convocation === true;
+          const sessionVal = sessNum;
           const seatVal = isAttending ? nextSeat : null;
 
-          valuesArr.push(sessNum, seatVal, certNo, student.id);
+          valuesArr.push(sessionVal, seatVal, certNo, student.id);
           valueStrings.push(`($${pIndex}::integer, $${pIndex + 1}::integer, $${pIndex + 2}::text, $${pIndex + 3}::uuid)`);
           pIndex += 4;
 
           if (isAttending) {
             nextSeat++;
           }
-          nextCertNo++;
+          nextSeq++;
         });
 
         const bulkQuery = `
