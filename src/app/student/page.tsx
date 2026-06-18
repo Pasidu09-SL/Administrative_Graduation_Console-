@@ -259,11 +259,11 @@ export default function StudentDashboard() {
     );
   }
 
-  if (error && !profile) {
+  if (!profile) {
     return (
       <div className="min-h-screen bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-50 flex flex-col items-center justify-center gap-4">
         <AlertTriangle className="h-10 w-10 text-red-500" />
-        <p className="text-red-600 dark:text-red-400 font-semibold">{error}</p>
+        <p className="text-red-600 dark:text-red-400 font-semibold">{error || 'Could not load student profile. Please try logging in again.'}</p>
         <Button onClick={() => window.location.reload()} className="bg-blue-600">Retry</Button>
       </div>
     );
@@ -754,6 +754,8 @@ export default function StudentDashboard() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
+
+
                 <div className="space-y-2">
                   <Label htmlFor="attendanceChoice" className="sr-only">Attendance Choice</Label>
                   <select

@@ -22,6 +22,7 @@ export async function GET() {
 }
 
 // POST: Add a new convocation session
+// POST: Add or allocate a convocation session
 export async function POST(req: Request) {
   try {
     const session = await getAdminSession();
@@ -29,7 +30,96 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: 'Unauthorized. Administrator role required.' }, { status: 401 });
     }
 
-    const { sessionNumber, sessionName } = await req.json();
+    const body = await req.json();
+    const { action } = body;
+
+    if (action === "allocate") {
+      const { groupName, sessionNumber, sessionDate, sessionTime } = body;
+      const sessNum = parseInt(sessionNumber);
+      if (isNaN(sessNum) || sessNum <= 0) {
+        return NextResponse.json({ success: false, error: 'Invalid session number.' }, { status: 400 });
+      }
+      if (!groupName) {
+        return NextResponse.json({ success: false, error: 'Group name is required.' }, { status: 400 });
+      }
+
+      const data = await runAsAdmin(async (client) => {
+        // 1. Find the target session
+        const sessionRes = await client.query('SELECT * FROM convocation_sessions WHERE session_number = $1', [sessNum]);
+        if (sessionRes.rows.length === 0) {
+          throw new Error(`Session ${sessNum} does not exist.`);
+        }
+        const sessionRow = sessionRes.rows[0];
+
+        // 2. Clear this group from any other session first
+        await client.query(`
+          UPDATE convocation_sessions 
+          SET faculty_1 = CASE WHEN faculty_1 = $1 THEN NULL ELSE faculty_1 END,
+              faculty_2 = CASE WHEN faculty_2 = $1 THEN NULL ELSE faculty_2 END
+        `, [groupName]);
+
+        // 3. Verify target session capacity (max 2 groups)
+        const f1 = sessionRow.faculty_1;
+        const f2 = sessionRow.faculty_2;
+
+        let updateQuery = "";
+        let params: any[] = [];
+
+        if (f1 === groupName || f2 === groupName) {
+          // Already in this session, just update date/time
+          updateQuery = `
+            UPDATE convocation_sessions 
+            SET session_date = $1, session_time = $2 
+            WHERE session_number = $3
+            RETURNING *
+          `;
+          params = [sessionDate, sessionTime, sessNum];
+        } else if (!f1) {
+          updateQuery = `
+            UPDATE convocation_sessions 
+            SET session_date = $1, session_time = $2, faculty_1 = $3 
+            WHERE session_number = $4
+            RETURNING *
+          `;
+          params = [sessionDate, sessionTime, groupName, sessNum];
+        } else if (!f2) {
+          updateQuery = `
+            UPDATE convocation_sessions 
+            SET session_date = $1, session_time = $2, faculty_2 = $3 
+            WHERE session_number = $4
+            RETURNING *
+          `;
+          params = [sessionDate, sessionTime, groupName, sessNum];
+        } else {
+          throw new Error(`Session ${sessNum} is already full (occupied by: ${f1} and ${f2}).`);
+        }
+
+        const res = await client.query(updateQuery, params);
+        return res.rows[0];
+      });
+
+      return NextResponse.json({ success: true, data });
+    }
+
+    if (action === "clear_allocation") {
+      const { groupName } = body;
+      if (!groupName) {
+        return NextResponse.json({ success: false, error: 'Group name is required.' }, { status: 400 });
+      }
+
+      await runAsAdmin(async (client) => {
+        await client.query(`
+          UPDATE convocation_sessions 
+          SET faculty_1 = CASE WHEN faculty_1 = $1 THEN NULL ELSE faculty_1 END,
+              faculty_2 = CASE WHEN faculty_2 = $1 THEN NULL ELSE faculty_2 END
+        `, [groupName]);
+      });
+
+      return NextResponse.json({ success: true, message: `Cleared session allocation for ${groupName}.` });
+    }
+
+    // Default: Add a new convocation session
+    const { sessionNumber, sessionName } = body;
     const num = parseInt(sessionNumber);
     if (isNaN(num) || num <= 0) {
       return NextResponse.json({ success: false, error: 'Invalid session number. Must be a positive integer.' }, { status: 400 });

@@ -34,10 +34,9 @@ export const studentSchema = z.object({
       const parsed = parseFloat(strVal);
       return isNaN(parsed) ? strVal : parsed;
     },
-    z.union([
-      z.literal("-"),
-      z.number({ message: "GPA must be a number" }).min(0).max(4.0)
-    ], { errorMap: () => ({ message: "GPA is required and must be a number or \"-\"" }) })
+    z.any().refine(val => val === "-" || (typeof val === "number" && val >= 0 && val <= 4.0), {
+      message: 'GPA is required and must be a number or "-"'
+    })
   ),
   class: z.string().min(1, 'Class is required'),
 });

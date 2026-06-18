@@ -26,7 +26,7 @@ export async function POST(req: Request) {
       // 1. Fetch the custom email template from DB
       const tempRes = await client.query(
         "SELECT subject, body FROM email_templates WHERE template_key = $1",
-        [type === 'confirmation' ? 'confirmation' : 'magic_link'],
+        [type === 'confirmation' ? 'confirmation' : (type === 'in_absentia' ? 'in_absentia' : 'magic_link')],
       );
       const customTemplate = tempRes.rows[0];
 
@@ -41,6 +41,11 @@ export async function POST(req: Request) {
         const unallocated = students.filter(s => s.session_number === null);
         if (unallocated.length > 0) {
           throw new Error("Cannot send confirmation emails. Some selected students do not have seating allocated.");
+        }
+      } else if (type === 'in_absentia') {
+        const unallocated = students.filter(s => s.certificate_number === null);
+        if (unallocated.length > 0) {
+          throw new Error("Cannot send in absentia confirmation emails. Some selected students do not have certificate numbers allocated.");
         }
       }
 
@@ -69,6 +74,25 @@ export async function POST(req: Request) {
               student.seat_number,
               student.certificate_number || ''
             );
+          }
+        } else if (type === 'in_absentia') {
+          subject = "Graduation Registration Confirmed - In Absentia";
+          if (customTemplate) {
+            subject = customTemplate.subject;
+            htmlContent = customTemplate.body
+              .replace(/\{\{student_name\}\}/g, student.name_with_initials)
+              .replace(/\{\{certificate_number\}\}/g, student.certificate_number || '');
+          } else {
+            htmlContent = `
+              <!DOCTYPE html>
+              <html>
+              <body>
+                <h2>In Absentia Graduation Confirmed</h2>
+                <p>Dear ${student.name_with_initials},</p>
+                <p>Your graduation registration has been confirmed in absentia. Your certificate number is: <strong>${student.certificate_number || ''}</strong></p>
+              </body>
+              </html>
+            `;
           }
         } else {
           // Generate magic token and link
@@ -103,7 +127,7 @@ export async function POST(req: Request) {
           });
 
           // Save status in DB
-          if (type === 'confirmation') {
+          if (type === 'confirmation' || type === 'in_absentia') {
             await client.query(
               "UPDATE students SET confirmation_email_sent = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = $1",
               [student.id],
@@ -127,9 +151,14 @@ export async function POST(req: Request) {
 
       // Log dispatch action in audit logs
       if (successCount > 0) {
-        const actionText = type === 'confirmation'
-          ? `Dispatched seat confirmation email to ${successCount} candidates`
-          : `Dispatched onboarding magic link email to ${successCount} candidates`;
+        let actionText = "";
+        if (type === 'confirmation') {
+          actionText = `Dispatched seat confirmation email to ${successCount} candidates`;
+        } else if (type === 'in_absentia') {
+          actionText = `Dispatched in absentia confirmation email to ${successCount} candidates`;
+        } else {
+          actionText = `Dispatched onboarding magic link email to ${successCount} candidates`;
+        }
         await client.query(
           `INSERT INTO audit_logs (admin_id, action_taken, student_id)
            VALUES ($1, $2, NULL)`,

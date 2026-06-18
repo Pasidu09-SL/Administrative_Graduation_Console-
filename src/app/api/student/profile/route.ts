@@ -30,7 +30,10 @@ export async function GET() {
          WHERE LOWER(s.email) = LOWER($1) AND s.convocation_year = $2`,
         [payload.email, targetYear]
       );
-      return res.rows[0] || null;
+      const student = res.rows[0];
+      if (!student) return null;
+
+      return student || null;
     });
 
     if (!data) {
@@ -181,7 +184,10 @@ export async function PATCH(req: Request) {
          WHERE s.id = $1`,
         [updatedId]
       );
-      return fullRes.rows[0];
+      const updatedStudent = fullRes.rows[0];
+      if (!updatedStudent) return null;
+
+      return updatedStudent;
     });
 
     return NextResponse.json({ success: true, data: result });

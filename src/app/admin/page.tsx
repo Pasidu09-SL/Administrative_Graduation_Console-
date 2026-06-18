@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useEffect, useState, useRef } from "react";
 import {
@@ -44,6 +44,18 @@ import {
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { useRouter } from "next/navigation";
+import {
+  Document,
+  Packer,
+  Paragraph,
+  TextRun,
+  AlignmentType,
+  HeadingLevel,
+  TabStopPosition,
+  TabStopType,
+  LeaderType,
+} from "docx";
+import jsPDF from "jspdf";
 
 const wrapPlaceholdersInHtml = (htmlStr: string) => {
   if (typeof window === "undefined" || !htmlStr) return htmlStr;
@@ -152,6 +164,7 @@ export default function AdminDashboard() {
     | "db_maintenance"
     | "dispatch"
     | "cert_layout"
+    | "session_allocation"
   >("degrees");
   const [expandedSection, setExpandedSection] = useState<"admin" | "general">(
     "admin",
@@ -165,6 +178,21 @@ export default function AdminDashboard() {
   const [registryAttendance, setRegistryAttendance] = useState("");
   const [registrySearch, setRegistrySearch] = useState("");
   const [registryStudents, setRegistryStudents] = useState<any[]>([]);
+
+  // Verification Letter Modal States
+  const [verLetterStudent, setVerLetterStudent] = useState<any | null>(null);
+  const [verLetterStep, setVerLetterStep] = useState<"form" | "preview">("form");
+  const [verLetterGenerating, setVerLetterGenerating] = useState(false);
+  const [verLetterInputs, setVerLetterInputs] = useState({
+    yourNumber: "",
+    ourRef: "",
+    myNumber: "",
+    fileNumber: "",
+    refLetterDate: "",
+    addressee: "",
+    staffName: "",
+  });
+  const [verLetterPdfBlob, setVerLetterPdfBlob] = useState<Blob | null>(null);
 
   // Staff Authentication States
   const [staffUser, setStaffUser] = useState<any | null>(null);
@@ -377,7 +405,7 @@ export default function AdminDashboard() {
 
   const [emailTemplates, setEmailTemplates] = useState<any[]>([]);
   const [selectedTemplateKey, setSelectedTemplateKey] = useState<
-    "magic_link" | "rejection" | "confirmation"
+    "magic_link" | "rejection" | "confirmation" | "in_absentia"
   >("magic_link");
   const [templateSubject, setTemplateSubject] = useState("");
   const [templateBody, setTemplateBody] = useState("");
@@ -388,10 +416,17 @@ export default function AdminDashboard() {
   const [selectedDispatcherStudents, setSelectedDispatcherStudents] = useState<
     any[]
   >([]);
-  const [dispatchType, setDispatchType] = useState<"onboarding" | "confirmation">("onboarding");
+  const [dispatchType, setDispatchType] = useState<"onboarding" | "confirmation" | "in_absentia">("onboarding");
   const [dispatchFacultyFilter, setDispatchFacultyFilter] = useState("");
   const [dispatchDegreeFilter, setDispatchDegreeFilter] = useState("");
   const [dispatchSearchRegNo, setDispatchSearchRegNo] = useState("");
+  const [dispatchStatusFilter, setDispatchStatusFilter] = useState<"" | "Sent" | "Pending">("");
+
+  // Session Allocation workspace states
+  const [sessAllocGroup, setSessAllocGroup] = useState("");
+  const [sessAllocSession, setSessAllocSession] = useState("");
+  const [sessAllocDate, setSessAllocDate] = useState("");
+  const [sessAllocTime, setSessAllocTime] = useState("");
 
   const [showAddDegreeModal, setShowAddDegreeModal] = useState(false);
 
@@ -849,6 +884,429 @@ export default function AdminDashboard() {
     }
   };
 
+  // ─── DOCUMENT 1: Graduation List Word Document ───────────────────────────
+  const generateGraduationListDocx = async () => {
+    const allStudents = filteredRegistryStudents;
+
+    // Helper: determine if a degree is a bachelor's
+    const isBachelors = (degreeName: string) =>
+      /bachelor/i.test(degreeName || "");
+
+    // Sort class order for attending
+    const CLASS_ORDER: Record<string, number> = {
+      "First Class": 0,
+      "Second Class (Upper Division)": 1,
+      "Second Class Upper": 1,
+      "Second Class (Lower Division)": 2,
+      "Second Class Lower": 2,
+      "Pass": 3,
+      "General": 3,
+    };
+
+    const normaliseClass = (cls: string | null | undefined): string => {
+      if (!cls) return "Pass";
+      const c = cls.trim();
+      if (/first/i.test(c)) return "First Class";
+      if (/upper/i.test(c)) return "Second Class (Upper Division)";
+      if (/lower/i.test(c)) return "Second Class (Lower Division)";
+      return "Pass";
+    };
+
+    // Group students by faculty → degree
+    const byFaculty: Record<string, Record<string, any[]>> = {};
+    for (const st of allStudents) {
+      const fac = st.faculty || "Unknown Faculty";
+      const deg = st.degree_name_en || "Unknown Degree";
+      if (!byFaculty[fac]) byFaculty[fac] = {};
+      if (!byFaculty[fac][deg]) byFaculty[fac][deg] = [];
+      byFaculty[fac][deg].push(st);
+    }
+
+    const sortedFaculties = Object.keys(byFaculty).sort();
+    const docChildren: Paragraph[] = [];
+
+    const makePara = (
+      text: string,
+      opts: {
+        bold?: boolean;
+        size?: number;
+        allCaps?: boolean;
+        center?: boolean;
+        underline?: boolean;
+        color?: string;
+        spaceBefore?: number;
+        spaceAfter?: number;
+        indent?: number;
+      } = {}
+    ) =>
+      new Paragraph({
+        alignment: opts.center ? AlignmentType.CENTER : AlignmentType.LEFT,
+        spacing: {
+          before: (opts.spaceBefore ?? 0) * 20,
+          after: (opts.spaceAfter ?? 0) * 20,
+        },
+        indent: opts.indent ? { left: opts.indent * 20 } : undefined,
+        children: [
+          new TextRun({
+            text,
+            bold: opts.bold,
+            size: (opts.size ?? 11) * 2,
+            allCaps: opts.allCaps,
+            underline: opts.underline ? {} : undefined,
+            color: opts.color,
+          }),
+        ],
+      });
+
+    for (const faculty of sortedFaculties) {
+      const degreeMap = byFaculty[faculty];
+      const sortedDegrees = Object.keys(degreeMap).sort();
+
+      // Faculty heading
+      docChildren.push(makePara(faculty.toUpperCase(), { bold: true, size: 14, center: true, spaceBefore: 20, spaceAfter: 4 }));
+      docChildren.push(makePara(`Presented by the Dean / ${faculty}`, { size: 11, center: true, spaceAfter: 12 }));
+
+      for (const degreeName of sortedDegrees) {
+        const students = degreeMap[degreeName];
+        const attending = students.filter((s) => s.attending_convocation === true);
+        const inAbsentia = students.filter((s) => s.attending_convocation === false);
+
+        // Degree heading
+        docChildren.push(makePara(degreeName.toUpperCase(), { bold: true, size: 12, underline: true, spaceBefore: 10, spaceAfter: 6 }));
+
+        if (isBachelors(degreeName)) {
+          // ── ATTENDING sections ──
+          const classGroups: Record<string, string[]> = {
+            "First Class": [],
+            "Second Class (Upper Division)": [],
+            "Second Class (Lower Division)": [],
+            "Pass": [],
+          };
+          for (const st of attending) {
+            const cls = normaliseClass(st.degree_class);
+            classGroups[cls]?.push(st.full_name || st.name_with_initials || "");
+          }
+
+          for (const [cls, names] of Object.entries(classGroups)) {
+            docChildren.push(makePara(cls.toUpperCase(), { bold: true, size: 11, spaceBefore: 6, spaceAfter: 3 }));
+            if (names.length === 0) {
+              docChildren.push(makePara("NIL", { size: 11, indent: 36 }));
+            } else {
+              names.forEach((name, i) => {
+                docChildren.push(
+                  new Paragraph({
+                    indent: { left: 36 * 20 },
+                    children: [
+                      new TextRun({ text: String(i + 1).padStart(3, "0"), size: 22, bold: true }),
+                      new TextRun({ text: "\t" + name, size: 22 }),
+                    ],
+                  })
+                );
+              });
+            }
+          }
+
+          // ── IN ABSENTIA ──
+          docChildren.push(makePara("IN ABSENTIA", { bold: true, size: 11, color: "555555", spaceBefore: 10, spaceAfter: 4 }));
+
+          const absentiaGroups: Record<string, string[]> = {
+            "First Class": [],
+            "Second Class (Upper Division)": [],
+            "Second Class (Lower Division)": [],
+            "Pass": [],
+          };
+          for (const st of inAbsentia) {
+            const cls = normaliseClass(st.degree_class);
+            absentiaGroups[cls]?.push(st.full_name || st.name_with_initials || "");
+          }
+
+          for (const [cls, names] of Object.entries(absentiaGroups)) {
+            docChildren.push(makePara(cls.toUpperCase(), { bold: true, size: 11, spaceBefore: 4, spaceAfter: 2 }));
+            if (names.length === 0) {
+              docChildren.push(makePara("NIL", { size: 11, indent: 36 }));
+            } else {
+              names.forEach((name, i) => {
+                docChildren.push(
+                  new Paragraph({
+                    indent: { left: 36 * 20 },
+                    children: [
+                      new TextRun({ text: String(i + 1).padStart(3, "0"), size: 22, bold: true }),
+                      new TextRun({ text: "\t" + name, size: 22 }),
+                    ],
+                  })
+                );
+              });
+            }
+          }
+        } else {
+          // ── NON-BACHELOR: only PASS ──
+          docChildren.push(makePara("PASS", { bold: true, size: 11, spaceBefore: 4, spaceAfter: 2 }));
+          if (attending.length === 0) {
+            docChildren.push(makePara("NIL", { size: 11, indent: 36 }));
+          } else {
+            attending.forEach((st, i) => {
+              docChildren.push(
+                new Paragraph({
+                  indent: { left: 36 * 20 },
+                  children: [
+                    new TextRun({ text: String(i + 1).padStart(3, "0"), size: 22, bold: true }),
+                    new TextRun({ text: "\t" + (st.full_name || st.name_with_initials || ""), size: 22 }),
+                  ],
+                })
+              );
+            });
+          }
+
+          // In Absentia PASS
+          docChildren.push(makePara("IN ABSENTIA", { bold: true, size: 11, color: "555555", spaceBefore: 8, spaceAfter: 2 }));
+          docChildren.push(makePara("PASS", { bold: true, size: 11, spaceBefore: 2, spaceAfter: 2 }));
+          if (inAbsentia.length === 0) {
+            docChildren.push(makePara("NIL", { size: 11, indent: 36 }));
+          } else {
+            inAbsentia.forEach((st, i) => {
+              docChildren.push(
+                new Paragraph({
+                  indent: { left: 36 * 20 },
+                  children: [
+                    new TextRun({ text: String(i + 1).padStart(3, "0"), size: 22, bold: true }),
+                    new TextRun({ text: "\t" + (st.full_name || st.name_with_initials || ""), size: 22 }),
+                  ],
+                })
+              );
+            });
+          }
+        }
+      }
+
+      // Page break after each faculty (except last)
+      if (faculty !== sortedFaculties[sortedFaculties.length - 1]) {
+        docChildren.push(new Paragraph({ pageBreakBefore: true, children: [] }));
+      }
+    }
+
+    const doc = new Document({
+      sections: [
+        {
+          properties: {},
+          children: docChildren,
+        },
+      ],
+    });
+
+    const blob = await Packer.toBlob(doc);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `Graduation_List_${registryYear || activeConvocationYear}.docx`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // ─── DOCUMENT 2: Verification Letter PDF ────────────────────────────────
+  const generateVerificationLetterPDF = async (
+    student: any,
+    inputs: typeof verLetterInputs
+  ): Promise<Blob> => {
+    const doc = new jsPDF({ unit: "mm", format: "a4" });
+    const W = 210;
+    const margin = 20;
+    let y = 15;
+
+    // ── Load logo ──
+    const loadImageAsDataURL = (src: string): Promise<string> =>
+      new Promise((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) return reject("No canvas context");
+          // Draw greyscale
+          ctx.filter = "grayscale(100%)";
+          ctx.drawImage(img, 0, 0);
+          resolve(canvas.toDataURL("image/png"));
+        };
+        img.onerror = reject;
+        img.src = src;
+      });
+
+    let logoDataUrl: string | null = null;
+    try {
+      logoDataUrl = await loadImageAsDataURL("/templates/RUSL.png");
+    } catch {
+      logoDataUrl = null;
+    }
+
+    // ── HEADER (3 columns) ──
+    const colW = (W - margin * 2) / 3;
+
+    // Left: University names (3 languages)
+    doc.setFontSize(8);
+    doc.setFont("helvetica", "bold");
+    const leftLines = [
+      "රාජරාට විශ්වවිද්‍යාලය",
+      "ராஜரட பல்கலைக்கழகம்",
+      "Rajarata University",
+      "of Sri Lanka",
+    ];
+    leftLines.forEach((line, i) => {
+      doc.text(line, margin, y + i * 4.5, { align: "left" });
+    });
+
+    // Center: Logo
+    if (logoDataUrl) {
+      doc.addImage(logoDataUrl, "PNG", margin + colW + 5, y, 22, 22);
+    } else {
+      doc.setFontSize(8);
+      doc.text("[LOGO]", margin + colW + 10, y + 10, { align: "center" });
+    }
+
+    // Right: Mihinthale
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    const rightLines = [
+      "මිහින්තලේ, ශ්‍රී ලංකාව",
+      "மிஹிந்தலே, இலங்கை",
+      "Mihinthale,",
+      "Sri Lanka",
+    ];
+    rightLines.forEach((line, i) => {
+      doc.text(line, W - margin, y + i * 4.5, { align: "right" });
+    });
+
+    y += 26;
+
+    // Header divider
+    doc.setDrawColor(0);
+    doc.setLineWidth(0.5);
+    doc.line(margin, y, W - margin, y);
+    y += 4;
+
+    // Tel / Fax
+    doc.setFontSize(7.5);
+    doc.setFont("helvetica", "normal");
+    doc.text("Tel: +94 25 226 5600  |  Fax: +94 25 226 5601  |  Email: registrar@rjt.ac.lk", W / 2, y, { align: "center" });
+    y += 4;
+
+    doc.line(margin, y, W - margin, y);
+    y += 6;
+
+    // ── REFERENCE COLUMNS (2 columns) ──
+    doc.setFontSize(9);
+    const refLeft = margin;
+    const refRight = W / 2 + 5;
+
+    // Left column
+    doc.setFont("helvetica", "bold");
+    doc.text("Your Number:", refLeft, y);
+    doc.setFont("helvetica", "normal");
+    doc.text(inputs.yourNumber || ".....................", refLeft + 28, y);
+    y += 5;
+    doc.setFont("helvetica", "bold");
+    doc.text("Our Ref:", refLeft, y);
+    doc.setFont("helvetica", "normal");
+    doc.text(inputs.ourRef || ".....................", refLeft + 28, y);
+    y -= 5;
+
+    // Right column
+    doc.setFont("helvetica", "bold");
+    doc.text("My Number:", refRight, y);
+    doc.setFont("helvetica", "normal");
+    doc.text(inputs.myNumber || ".....................", refRight + 25, y);
+    y += 5;
+    doc.setFont("helvetica", "bold");
+    doc.text("File Number:", refRight, y);
+    doc.setFont("helvetica", "normal");
+    doc.text(inputs.fileNumber || ".....................", refRight + 25, y);
+    y += 5;
+    doc.setFont("helvetica", "bold");
+    doc.text("Date:", refRight, y);
+    doc.setFont("helvetica", "normal");
+    const today = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+    doc.text(today, refRight + 25, y);
+    y += 10;
+
+    // ── ADDRESSEE ──
+    const addressLines = (inputs.addressee || "").split("\n");
+    doc.setFontSize(9.5);
+    for (const line of addressLines) {
+      doc.setFont("helvetica", "normal");
+      doc.text(line, margin, y);
+      y += 5;
+    }
+    y += 3;
+
+    // ── SUBJECT ──
+    const subject = `Verification of Degree Certificate - ${student.full_name || student.name_with_initials}`;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9.5);
+    doc.text("Subject: ", margin, y);
+    const subjectX = margin + doc.getTextWidth("Subject: ");
+    doc.setFont("helvetica", "normal");
+    // Draw underlined subject text
+    doc.text(subject, subjectX, y);
+    const subjectW = doc.getTextWidth(subject);
+    doc.line(subjectX, y + 0.5, subjectX + subjectW, y + 0.5);
+    y += 8;
+
+    // ── REFERENCE SENTENCE ──
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9.5);
+    const refDate = inputs.refLetterDate || "........................";
+    const refSentence = `This has reference to your letter ${refDate} on the above subject.`;
+    const refLines = doc.splitTextToSize(refSentence, W - margin * 2);
+    doc.text(refLines, margin, y);
+    y += refLines.length * 5 + 6;
+
+    // ── DETAIL FIELDS ──
+    const fields: [string, string][] = [
+      ["Name of the Certificate", "Degree Certificate"],
+      ["Name in Full", student.full_name || student.name_with_initials || ""],
+      ["Degree", student.degree_name_en || ""],
+      ["Effective Date of the Degree", student.effective_date ? new Date(student.effective_date).toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" }) : (student.convocation_year || "")],
+      ["Graduation Date", (() => {
+        const sess = convocationSessions.find((s: any) => s.session_number === student.session_number);
+        return sess?.session_date ? new Date(sess.session_date).toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" }) : (student.convocation_year || "");
+      })()],
+      ["Serial No. of the Certificate", student.certificate_number ? String(student.certificate_number) : ""],
+      ["Reg. NO / Index No.", `${student.registration_no || ""}  /  ${student.index_no || ""}`],
+      ["Final GPA & Class", `${student.gpa ? Number(student.gpa).toFixed(2) : ""}${student.degree_class ? " - " + student.degree_class : ""}`],
+    ];
+
+    doc.setFontSize(9.5);
+    fields.forEach(([label, value], i) => {
+      doc.setFont("helvetica", "bold");
+      doc.text(`${i + 1}.`, margin, y);
+      doc.text(label, margin + 6, y);
+      doc.setFont("helvetica", "normal");
+      doc.text("-", margin + 75, y);
+      const wrappedVal = doc.splitTextToSize(value, W - margin - 85);
+      doc.text(wrappedVal, margin + 80, y);
+      y += wrappedVal.length > 1 ? wrappedVal.length * 5 : 6;
+    });
+
+    y += 6;
+
+    // ── CLOSING ──
+    const closing = "I am pleased to inform you that the above information is Genuine and the Degree has been awarded by the Rajarata University of Sri Lanka.";
+    const closingLines = doc.splitTextToSize(closing, W - margin * 2);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9.5);
+    doc.text(closingLines, margin, y);
+    y += closingLines.length * 5 + 14;
+
+    // ── SIGNATURE ──
+    doc.setFont("helvetica", "normal");
+    doc.text(inputs.staffName || ".......................................................", margin, y);
+    y += 5;
+    doc.setFont("helvetica", "bold");
+    doc.text("Deputy Registrar", margin, y);
+
+    return doc.output("blob");
+  };
+
   useEffect(() => {
     if (activeConvocationYear && !registryYear) {
       setRegistryYear(activeConvocationYear);
@@ -887,7 +1345,14 @@ export default function AdminDashboard() {
       list = list.filter(
         (s) =>
           s.verification_status === "Approved" &&
-          s.session_number !== null,
+          s.session_number !== null &&
+          s.attending_convocation === true,
+      );
+    } else if (dispatchType === "in_absentia") {
+      list = list.filter(
+        (s) =>
+          s.verification_status === "Approved" &&
+          s.attending_convocation === false,
       );
     }
     return list.filter((s) => {
@@ -899,8 +1364,15 @@ export default function AdminDashboard() {
         !dispatchSearchRegNo ||
         (s.registration_no || "")
           .toLowerCase()
+          .includes(dispatchSearchRegNo.toLowerCase().trim()) ||
+        (s.name_with_initials || "")
+          .toLowerCase()
           .includes(dispatchSearchRegNo.toLowerCase().trim());
-      return matchFaculty && matchDegree && matchSearch;
+      const isSent = dispatchType === "onboarding" ? s.email_sent : s.confirmation_email_sent;
+      const matchStatus =
+        !dispatchStatusFilter ||
+        (dispatchStatusFilter === "Sent" ? isSent : !isSent);
+      return matchFaculty && matchDegree && matchSearch && matchStatus;
     });
   }, [
     dispatcherStudents,
@@ -908,11 +1380,12 @@ export default function AdminDashboard() {
     dispatchFacultyFilter,
     dispatchDegreeFilter,
     dispatchSearchRegNo,
+    dispatchStatusFilter,
   ]);
 
   useEffect(() => {
     setSelectedDispatcherStudents([]);
-  }, [dispatchType, dispatchFacultyFilter, dispatchDegreeFilter]);
+  }, [dispatchType, dispatchFacultyFilter, dispatchDegreeFilter, dispatchStatusFilter]);
 
   const filteredRegistryStudents = React.useMemo(() => {
     const validStudents = registryStudents.filter(
@@ -1813,6 +2286,8 @@ export default function AdminDashboard() {
         const msg =
           dispatchType === "confirmation"
             ? `Successfully sent seat confirmation emails to ${json.sentCount} candidates.`
+            : dispatchType === "in_absentia"
+            ? `Successfully sent in absentia confirmation emails to ${json.sentCount} candidates.`
             : `Successfully sent magic link emails to ${json.sentCount} candidates.`;
         triggerAlert(true, msg);
         setSelectedDispatcherStudents([]);
@@ -2217,33 +2692,116 @@ export default function AdminDashboard() {
     }
   };
 
-  // 5. SESSION ALLOCATION
-  const handleAllocateSession = async (e: React.FormEvent) => {
+  // 5. SESSION & SEATING ALLOCATION HANDLERS
+  const handleSaveSessionAllocation = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!sessAllocGroup || !sessAllocSession) {
+      triggerAlert(false, "Please select both a group and a session.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch("/api/admin/convocation-sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "allocate",
+          groupName: sessAllocGroup,
+          sessionNumber: sessAllocSession,
+          sessionDate: sessAllocDate,
+          sessionTime: sessAllocTime,
+        }),
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        triggerAlert(true, `Successfully allocated ${sessAllocGroup} to Session ${sessAllocSession}.`);
+        loadConvocationSessions();
+        loadSessionAllocations();
+        loadStudents();
+      } else {
+        triggerAlert(false, json.error || "Failed to allocate session.");
+      }
+    } catch (err) {
+      triggerAlert(false, "Network error.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleClearSessionAllocation = async (groupName: string) => {
+    if (!window.confirm(`Are you sure you want to clear session allocation for ${groupName}?`)) {
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch("/api/admin/convocation-sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "clear_allocation",
+          groupName,
+        }),
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        triggerAlert(true, `Successfully cleared session allocation for ${groupName}.`);
+        loadConvocationSessions();
+        loadSessionAllocations();
+        loadStudents();
+      } else {
+        triggerAlert(false, json.error || "Failed to clear session allocation.");
+      }
+    } catch (err) {
+      triggerAlert(false, "Network error.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleTriggerSeatingAllocation = async (groupName: string) => {
     setLoading(true);
     try {
       const res = await fetch("/api/admin/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          group: allocateFaculty,
-          sessionNumber: allocateSession,
+          group: groupName,
         }),
       });
-
       const json = await res.json();
-      if (res.ok) {
+      if (res.ok && json.success) {
         triggerAlert(
           true,
-          `Successfully assigned ${allocateFaculty} list to Session ${allocateSession}. Serial numbers computed.`,
+          `Successfully allocated seats for ${groupName}. Session: ${json.data.sessionNumber}. Allocated: ${json.data.allocatedCount} candidates.`,
         );
         loadSessionAllocations();
         loadStudents();
       } else {
-        triggerAlert(
-          false,
-          json.error || "Seating allocation algorithm error.",
-        );
+        triggerAlert(false, json.error || "Failed to allocate seats.");
+      }
+    } catch (err) {
+      triggerAlert(false, "Network error.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleClearSeatingAllocation = async (groupName: string) => {
+    if (!window.confirm(`Are you sure you want to clear seating allocation for ${groupName}?`)) {
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/admin/sessions?group=${encodeURIComponent(groupName)}`, {
+        method: "DELETE",
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        triggerAlert(true, json.message || `Cleared allocation for ${groupName}.`);
+        loadSessionAllocations();
+        loadStudents();
+      } else {
+        triggerAlert(false, json.error || "Failed to clear allocation.");
       }
     } catch (err) {
       triggerAlert(false, "Network error.");
@@ -2795,10 +3353,11 @@ export default function AdminDashboard() {
                       {[
                         { id: "degrees", label: "Course Manager" },
                         { id: "timeline", label: "Timeline Control" },
+                        { id: "session_allocation", label: "Session Allocation" },
                         { id: "ingest", label: "Student Onboarding" },
                         { id: "dispatch", label: "Email Dispatcher" },
                         { id: "audit", label: "Split Audit Center" },
-                        { id: "seating", label: "Session and Seating" },
+                        { id: "seating", label: "Seating Allocation" },
                         { id: "print", label: "Certificate Generation" },
                         { id: "cert_layout", label: "Certificate Layout" },
                         { id: "registry", label: "Student Registry" },
@@ -2828,10 +3387,11 @@ export default function AdminDashboard() {
                 {[
                   { id: "degrees", label: "Course Manager" },
                   { id: "timeline", label: "Timeline Control" },
+                  { id: "session_allocation", label: "Session Allocation" },
                   { id: "ingest", label: "Sudent Onboarding" },
                   { id: "dispatch", label: "Email Dispatcher" },
                   { id: "audit", label: "Split Audit Center" },
-                  { id: "seating", label: "Session and Seating" },
+                  { id: "seating", label: "Seating Allocation" },
                   { id: "print", label: "Certificate Generation" },
                   { id: "registry", label: "Student Registry" },
                 ].map((tab) => (
@@ -3392,16 +3952,18 @@ export default function AdminDashboard() {
                     <div className="flex bg-slate-100 dark:bg-slate-950 p-1 rounded-xl w-fit">
                       <button
                         onClick={() => setDispatchType("onboarding")}
+                        type="button"
                         className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${
                           dispatchType === "onboarding"
                             ? "bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-sm"
                             : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
                         }`}
                       >
-                      Portal Access Details 
+                        Portal Access Details 
                       </button>
                       <button
                         onClick={() => setDispatchType("confirmation")}
+                        type="button"
                         className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${
                           dispatchType === "confirmation"
                             ? "bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-sm"
@@ -3409,6 +3971,17 @@ export default function AdminDashboard() {
                         }`}
                       >
                         Seat Confirmation Details
+                      </button>
+                      <button
+                        onClick={() => setDispatchType("in_absentia")}
+                        type="button"
+                        className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                          dispatchType === "in_absentia"
+                            ? "bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-sm"
+                            : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                        }`}
+                      >
+                        In Absentia Emails
                       </button>
                     </div>
                   </div>
@@ -3450,10 +4023,20 @@ export default function AdminDashboard() {
                       <Input
                         value={dispatchSearchRegNo}
                         onChange={(e) => setDispatchSearchRegNo(e.target.value)}
-                        placeholder="Search by reg no..."
+                        placeholder="Search by name or reg no..."
                         className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-slate-850 dark:text-slate-100 text-xs rounded-lg pl-8 h-8 placeholder-slate-400 dark:placeholder-slate-600"
                       />
                     </div>
+
+                    <select
+                      value={dispatchStatusFilter}
+                      onChange={(e) => setDispatchStatusFilter(e.target.value as any)}
+                      className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-300 px-2.5 py-1.5 rounded-lg focus:outline-none h-8 font-bold"
+                    >
+                      <option value="">All Statuses</option>
+                      <option value="Sent">Sent</option>
+                      <option value="Pending">Pending</option>
+                    </select>
 
                     <Button
                       variant="outline"
@@ -3493,7 +4076,11 @@ export default function AdminDashboard() {
                             Faculty
                           </TableHead>
                           <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">
-                            {dispatchType === "confirmation" ? "Seating Info" : "Email Address"}
+                            {dispatchType === "confirmation"
+                              ? "Seating Info"
+                              : dispatchType === "in_absentia"
+                              ? "Session Details"
+                              : "Email Address"}
                           </TableHead>
                           <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3">
                             Status
@@ -3503,9 +4090,11 @@ export default function AdminDashboard() {
                               Timeline Bypass
                             </TableHead>
                           )}
-                          <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3 text-right">
-                            {dispatchType === "confirmation" ? "Certificate No" : "Magic Link"}
-                          </TableHead>
+                          {dispatchType !== "onboarding" && (
+                            <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3 text-right">
+                              Certificate No
+                            </TableHead>
+                          )}
                         </TableRow>
                       </TableHeader>
                       <TableBody className="divide-y divide-slate-100 dark:divide-slate-900 font-medium">
@@ -3564,19 +4153,21 @@ export default function AdminDashboard() {
                                 <TableCell className="px-4 py-2.5 text-slate-550 dark:text-slate-400 font-mono">
                                   {dispatchType === "confirmation"
                                     ? `Session ${student.session_number} | Seat ${student.seat_number}`
+                                    : dispatchType === "in_absentia"
+                                    ? `Session ${student.session_number} | In Absentia`
                                     : student.email}
                                 </TableCell>
                                 <TableCell className="px-4 py-2.5">
                                   <span
                                     className={`px-2 py-0.5 rounded text-[9px] font-bold ${
-                                      (dispatchType === "confirmation" ? student.confirmation_email_sent : student.email_sent)
+                                      (dispatchType === "onboarding" ? student.email_sent : student.confirmation_email_sent)
                                         ? "bg-emerald-500/10 text-emerald-650 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20"
                                         : "bg-amber-500/10 text-amber-650 dark:text-amber-400 border border-amber-200 dark:border-amber-500/20"
                                     }`}
                                   >
-                                    {dispatchType === "confirmation"
-                                      ? (student.confirmation_email_sent ? "Sent" : "Pending")
-                                      : (student.email_sent ? "Sent" : "Pending")}
+                                    {(dispatchType === "onboarding" ? student.email_sent : student.confirmation_email_sent)
+                                      ? "Sent"
+                                      : "Pending"}
                                   </span>
                                 </TableCell>
                                 {dispatchType === "onboarding" && (
@@ -3629,34 +4220,13 @@ export default function AdminDashboard() {
                                     </div>
                                   </TableCell>
                                 )}
-                                <TableCell className="px-4 py-2.5 text-right font-mono">
-                                  {dispatchType === "confirmation" ? (
+                                {dispatchType !== "onboarding" && (
+                                  <TableCell className="px-4 py-2.5 text-right font-mono">
                                     <span className="font-bold text-blue-600 dark:text-blue-400 text-xs">
                                       {student.certificate_number}
                                     </span>
-                                  ) : magicLink ? (
-                                    <Button
-                                      variant="outline"
-                                      size="xs"
-                                      onClick={() => {
-                                        navigator.clipboard.writeText(
-                                          magicLink,
-                                        );
-                                        triggerAlert(
-                                          true,
-                                          "Magic link copied to clipboard!",
-                                        );
-                                      }}
-                                      className="h-7 text-[10px] px-2.5"
-                                    >
-                                      Copy Link
-                                    </Button>
-                                  ) : (
-                                    <span className="text-[10px] text-slate-400 italic">
-                                      No token generated
-                                    </span>
-                                  )}
-                                </TableCell>
+                                  </TableCell>
+                                )}
                               </TableRow>
                             );
                           })
@@ -3709,6 +4279,11 @@ export default function AdminDashboard() {
                                   key: "confirmation",
                                   label: "Seat Confirmation Details",
                                   desc: "Sent after seating and session allocations.",
+                                },
+                                {
+                                  key: "in_absentia",
+                                  label: "In Absentia Notification",
+                                  desc: "Sent manually to in-absentia candidates.",
                                 },
                               ].map((t) => (
                                 <button
@@ -4496,38 +5071,46 @@ export default function AdminDashboard() {
             </div>
           )}
 
-          {/* 5. SESSION MANAGEMENT & SEATING ALLOCATION WORKSPACE */}
-          {activeTab === "seating" && (
+                    {/* SESSION ALLOCATION WORKSPACE */}
+          {activeTab === "session_allocation" && (
             <div className="space-y-6">
+              <div>
+                <h2 className="text-xl font-bold text-slate-955 dark:text-white">Session Mapping Control</h2>
+                <p className="text-xs text-slate-500 mt-1">
+                  Define dates, times, and map student seating groups (faculties/externals) to graduation sessions.
+                </p>
+              </div>
+
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* Allocator Form */}
                 <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-2xl lg:col-span-1 shadow-sm">
                   <CardHeader>
                     <CardTitle className="text-base font-bold text-slate-950 dark:text-white">
-                      Assign Seating Group Session
+                      Map Group to Session
                     </CardTitle>
                     <CardDescription className="text-[11px] text-slate-500">
-                      Maps entire seating group to graduation session slots.
+                      Select group, session, and configure date & time parameters.
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
                     <form
-                      onSubmit={handleAllocateSession}
+                      onSubmit={handleSaveSessionAllocation}
                       className="space-y-4"
                     >
                       <div className="space-y-1.5">
                         <Label
-                          htmlFor="allocFaculty"
+                          htmlFor="sessAllocGroupSelect"
                           className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400"
                         >
-                          Allocation Group
+                          Graduation Seating Group
                         </Label>
                         <select
-                          id="allocFaculty"
-                          value={allocateFaculty}
-                          onChange={(e) => setAllocateFaculty(e.target.value)}
+                          id="sessAllocGroupSelect"
+                          value={sessAllocGroup}
+                          onChange={(e) => setSessAllocGroup(e.target.value)}
                           className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-300 px-3 py-2 rounded-lg focus:outline-none"
                         >
+                          <option value="">Select Seating Group</option>
                           {FACULTIES.map((fac) => (
                             <option key={fac} value={`${fac} (Internal)`}>
                               {fac} (Internal)
@@ -4541,23 +5124,58 @@ export default function AdminDashboard() {
 
                       <div className="space-y-1.5">
                         <Label
-                          htmlFor="allocSess"
+                          htmlFor="sessAllocSessionSelect"
                           className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400"
                         >
-                          Target Session (1-4)
+                          Target Session
                         </Label>
                         <select
-                          id="allocSess"
-                          value={allocateSession}
-                          onChange={(e) => setAllocateSession(e.target.value)}
+                          id="sessAllocSessionSelect"
+                          value={sessAllocSession}
+                          onChange={(e) => setSessAllocSession(e.target.value)}
                           className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-300 px-3 py-2 rounded-lg focus:outline-none"
                         >
+                          <option value="">Select Session</option>
                           {SESSIONS.map((sessNum) => (
                             <option key={sessNum} value={String(sessNum)}>
                               Session {sessNum}
                             </option>
                           ))}
                         </select>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label
+                          htmlFor="sessAllocDateInput"
+                          className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400"
+                        >
+                          Session Date (e.g. 2026-07-25)
+                        </Label>
+                        <Input
+                          id="sessAllocDateInput"
+                          type="text"
+                          value={sessAllocDate}
+                          onChange={(e) => setSessAllocDate(e.target.value)}
+                          placeholder="e.g. 25th July 2026"
+                          className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 text-xs rounded-lg h-9"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label
+                          htmlFor="sessAllocTimeInput"
+                          className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400"
+                        >
+                          Session Time (e.g. 09:00 AM)
+                        </Label>
+                        <Input
+                          id="sessAllocTimeInput"
+                          type="text"
+                          value={sessAllocTime}
+                          onChange={(e) => setSessAllocTime(e.target.value)}
+                          placeholder="e.g. 09:00 AM"
+                          className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 text-xs rounded-lg h-9"
+                        />
                       </div>
 
                       <Button
@@ -4570,145 +5188,232 @@ export default function AdminDashboard() {
                         ) : (
                           <Plus className="h-4 w-4" />
                         )}
-                        Allocate Seating
+                        Save Mapping
                       </Button>
                     </form>
                   </CardContent>
                 </Card>
 
-                {/* Seating allocations list */}
+                {/* Session Slots Overview */}
                 <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-2xl lg:col-span-2 shadow-sm">
                   <CardHeader>
-                    <CardTitle className="text-base font-bold text-slate-950 dark:text-white">
+                    <CardTitle className="text-base font-bold text-slate-955 dark:text-white">
                       Graduation Session Slots
                     </CardTitle>
                     <CardDescription className="text-[11px] text-slate-500">
-                      Overview of 4 sessions housing up to 2 groups each.
+                      Overview of graduation sessions and mapped faculties.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    {SESSIONS.map((sessNum) => {
-                      const groupsInSession = (() => {
-                        const map = new Map<
-                          string,
-                          { groupName: string; studentCount: number }
-                        >();
-                        sessionAllocations.forEach((alloc) => {
-                          if (alloc.session_number !== sessNum) return;
-                          const isExternal = alloc.degree_type === "External";
-                          const groupName = isExternal
-                            ? "All External Degrees"
-                            : `${alloc.faculty} (Internal)`;
+                    {convocationSessions.length === 0 ? (
+                      <div className="text-center py-8 text-xs text-slate-400 dark:text-slate-600 font-semibold italic">
+                        No sessions configured in Faculty & Session Management.
+                      </div>
+                    ) : (
+                      convocationSessions.map((session) => {
+                        const hasFaculty1 = !!session.faculty_1;
+                        const hasFaculty2 = !!session.faculty_2;
+                        
+                        return (
+                          <div
+                            key={session.id}
+                            className="p-4 bg-white dark:bg-slate-950/40 rounded-xl border border-slate-200 dark:border-slate-900 flex flex-col md:flex-row md:items-center justify-between gap-4"
+                          >
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-bold text-slate-900 dark:text-white">
+                                  {session.session_name || `Session ${session.session_number}`}
+                                </span>
+                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 border border-blue-100 dark:border-blue-900/50">
+                                  Session {session.session_number}
+                                </span>
+                              </div>
+                              <div className="text-[10px] text-slate-500 space-y-0.5">
+                                <div>
+                                  <span className="font-semibold">Date:</span> {session.session_date || "Not configured"}
+                                </div>
+                                <div>
+                                  <span className="font-semibold">Time:</span> {session.session_time || "Not configured"}
+                                </div>
+                              </div>
+                            </div>
 
-                          if (map.has(groupName)) {
-                            const existing = map.get(groupName)!;
-                            existing.studentCount += parseInt(
-                              alloc.student_count || "0",
-                            );
-                          } else {
-                            map.set(groupName, {
-                              groupName,
-                              studentCount: parseInt(
-                                alloc.student_count || "0",
-                              ),
-                            });
-                          }
-                        });
-                        return Array.from(map.values());
-                      })();
-
-                      return (
-                        <div
-                          key={sessNum}
-                          className="p-4 bg-white dark:bg-slate-950/40 rounded-xl border border-slate-200 dark:border-slate-900 flex flex-col md:flex-row md:items-center justify-between gap-4"
-                        >
-                          <div className="space-y-1">
-                            <span className="text-xs font-bold text-slate-900 dark:text-white">
-                              Session {sessNum}
-                            </span>
-                            <div className="text-[10px] text-slate-500">
-                              Maximum capacity: 2 groups
+                            <div className="flex flex-1 md:justify-end gap-3 flex-wrap">
+                              {!hasFaculty1 && !hasFaculty2 ? (
+                                <span className="text-xs text-slate-400 dark:text-slate-600 font-semibold italic flex items-center">
+                                  No groups allocated
+                                </span>
+                              ) : (
+                                <>
+                                  {hasFaculty1 && (
+                                    <div className="px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg flex items-center gap-3 text-xs">
+                                      <div>
+                                        <span className="font-bold text-blue-600 dark:text-blue-400 block leading-none">
+                                          {session.faculty_1}
+                                        </span>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleClearSessionAllocation(session.faculty_1)}
+                                        className="p-0.5 hover:bg-red-50 dark:hover:bg-red-950/20 text-red-600 dark:text-red-400 rounded transition"
+                                        title={`Clear allocation for ${session.faculty_1}`}
+                                      >
+                                        <X className="h-3 w-3" />
+                                      </button>
+                                    </div>
+                                  )}
+                                  {hasFaculty2 && (
+                                    <div className="px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg flex items-center gap-3 text-xs">
+                                      <div>
+                                        <span className="font-bold text-blue-600 dark:text-blue-400 block leading-none">
+                                          {session.faculty_2}
+                                        </span>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleClearSessionAllocation(session.faculty_2)}
+                                        className="p-0.5 hover:bg-red-50 dark:hover:bg-red-950/20 text-red-600 dark:text-red-400 rounded transition"
+                                        title={`Clear allocation for ${session.faculty_2}`}
+                                      >
+                                        <X className="h-3 w-3" />
+                                      </button>
+                                    </div>
+                                  )}
+                                </>
+                              )}
                             </div>
                           </div>
-
-                          <div className="flex flex-1 md:justify-end gap-3 flex-wrap">
-                            {groupsInSession.length === 0 ? (
-                              <span className="text-xs text-slate-400 dark:text-slate-600 font-semibold italic">
-                                Unallocated slot
-                              </span>
-                            ) : (
-                              groupsInSession.map((group) => (
-                                <div
-                                  key={group.groupName}
-                                  className="px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg flex items-center justify-between gap-4 text-xs"
-                                >
-                                  <div>
-                                    <span className="font-bold text-blue-600 dark:text-blue-400 block leading-none">
-                                      {group.groupName}
-                                    </span>
-                                    <span className="text-[9px] text-slate-500 mt-1 block">
-                                      {group.studentCount} Candidates
-                                    </span>
-                                  </div>
-                                  <button
-                                    type="button"
-                                    onClick={async () => {
-                                      if (
-                                        !window.confirm(
-                                          `Are you sure you want to clear session and seating allocation for ${group.groupName}?`,
-                                        )
-                                      ) {
-                                        return;
-                                      }
-                                      setLoading(true);
-                                      try {
-                                        const res = await fetch(
-                                          `/api/admin/sessions?group=${encodeURIComponent(group.groupName)}`,
-                                          {
-                                            method: "DELETE",
-                                          },
-                                        );
-                                        const json = await res.json();
-                                        if (res.ok && json.success) {
-                                          triggerAlert(
-                                            true,
-                                            json.message ||
-                                              `Successfully cleared allocation for ${group.groupName}.`,
-                                          );
-                                          loadSessionAllocations();
-                                          loadStudents();
-                                        } else {
-                                          triggerAlert(
-                                            false,
-                                            json.error ||
-                                              "Failed to clear allocation.",
-                                          );
-                                        }
-                                      } catch {
-                                        triggerAlert(false, "Network error.");
-                                      } finally {
-                                        setLoading(false);
-                                      }
-                                    }}
-                                    className="p-1 hover:bg-red-50 dark:hover:bg-red-950/20 text-red-600 dark:text-red-400 rounded-md transition"
-                                    title={`Clear ${group.groupName} allocation`}
-                                  >
-                                    <X className="h-3.5 w-3.5" />
-                                  </button>
-                                </div>
-                              ))
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
+                        );
+                      })
+                    )}
                   </CardContent>
                 </Card>
               </div>
             </div>
           )}
 
-          {/* 6. CERTIFICATE PRINT WORKSPACE */}
+          {/* SEATING ALLOCATION WORKSPACE */}
+          {activeTab === "seating" && (
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-xl font-bold text-slate-950 dark:text-white">Seating Allocation Control</h2>
+                <p className="text-xs text-slate-500 mt-1">
+                  Run sequential seating and certificate numbering algorithms for student groups after session assignments.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                {sessionAllocations.length === 0 ? (
+                  <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-2xl shadow-sm p-6 text-center">
+                    <span className="text-xs text-slate-400 dark:text-slate-600 font-semibold italic">
+                      No groups found. Please configure faculties and ingest students first.
+                    </span>
+                  </Card>
+                ) : (
+                  sessionAllocations.map((group) => {
+                    const hasSession = group.sessionNumber !== null;
+                    const canAllocate = hasSession && group.totalAttendingCount > 0;
+                    
+                    return (
+                      <Card
+                        key={group.groupName}
+                        className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-2xl shadow-sm overflow-hidden"
+                      >
+                        <div className="p-6 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+                          {/* Group Info & Stats */}
+                          <div className="space-y-2 flex-1">
+                            <div className="flex items-center gap-3 flex-wrap">
+                              <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                                {group.groupName}
+                              </h3>
+                              
+                              {/* Session Badge */}
+                              {hasSession ? (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 border border-blue-100 dark:border-blue-900/50">
+                                  Session {group.sessionNumber} ({group.sessionDate} at {group.sessionTime})
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400 border border-red-100 dark:border-red-950/30">
+                                  No Session Allocated
+                                </span>
+                              )}
+
+                              {/* Seating Allocation Status Badge */}
+                              {group.totalAttendingCount === 0 ? (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">
+                                  No Candidates Attending
+                                </span>
+                              ) : group.isSeatingAllocated ? (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-900/50 flex items-center gap-1">
+                                  <Check className="h-3 w-3" /> Allocated
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/20 text-amber-600 dark:text-amber-400 border border-amber-100 dark:border-amber-900/50 flex items-center gap-1 animate-pulse">
+                                  <AlertCircle className="h-3 w-3" /> Pending Seating
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Attending count summary */}
+                            <div className="text-xs text-slate-500">
+                              <span className="font-semibold text-slate-700 dark:text-slate-350">
+                                {group.totalAttendingCount} Approved Candidates Attending
+                              </span>{" "}
+                              across {group.degreeCount} academic programs.
+                            </div>
+
+                            {/* Degrees list */}
+                            {group.degrees.length > 0 && (
+                              <div className="flex flex-wrap gap-1.5 pt-1">
+                                {group.degrees.map((deg: any) => (
+                                  <span
+                                    key={deg.id}
+                                    className="text-[9px] font-bold px-2 py-0.5 bg-slate-50 dark:bg-slate-900 text-slate-600 dark:text-slate-400 rounded-md border border-slate-200 dark:border-slate-800/80"
+                                  >
+                                    {deg.name}: {deg.attendingCount} Attending
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Seating Actions */}
+                          <div className="flex items-center gap-2 lg:self-center shrink-0">
+                            {/* Allocate Seating Button */}
+                            <Button
+                              onClick={() => handleTriggerSeatingAllocation(group.groupName)}
+                              disabled={loading || !canAllocate || group.isSeatingAllocated}
+                              className="bg-blue-600 hover:bg-blue-700 text-white font-bold h-9 text-xs rounded-lg px-4 flex items-center gap-1.5 shadow disabled:opacity-50"
+                            >
+                              {loading ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <UserCheck className="h-4 w-4" />
+                              )}
+                              Allocate Seating
+                            </Button>
+
+                            {/* Clear Seating Button */}
+                            <Button
+                              variant="outline"
+                              onClick={() => handleClearSeatingAllocation(group.groupName)}
+                              disabled={loading || (!group.isSeatingAllocated && group.totalAttendingCount > 0 && !group.degrees.some((d: any) => d.attendingCount > 0))}
+                              className="border-slate-200 dark:border-slate-800 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/20 text-xs font-bold h-9 rounded-lg px-3 flex items-center gap-1.5"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              Clear Seating
+                            </Button>
+                          </div>
+                        </div>
+                      </Card>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
+          
+{/* 6. CERTIFICATE PRINT WORKSPACE */}
           {activeTab === "print" && (
             <div className="space-y-6">
               <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-2xl shadow-sm">
@@ -6134,14 +6839,24 @@ export default function AdminDashboard() {
           {activeTab === "registry" && (
             <div className="space-y-6">
               <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/3 backdrop-blur-md rounded-2xl shadow-sm">
-                <CardHeader>
-                  <CardTitle className="text-base font-bold text-slate-950 dark:text-white">
-                    Graduation Candidate Registry
-                  </CardTitle>
-                  <CardDescription className="text-[11px] text-slate-550">
-                    Comprehensive catalog of all student records for the
-                    selected graduation cohort.
-                  </CardDescription>
+                <CardHeader className="flex flex-row items-start justify-between gap-4 pb-4">
+                  <div>
+                    <CardTitle className="text-base font-bold text-slate-950 dark:text-white">
+                      Graduation Candidate Registry
+                    </CardTitle>
+                    <CardDescription className="text-[11px] text-slate-550 mt-1">
+                      Comprehensive catalog of all student records for the
+                      selected graduation cohort.
+                    </CardDescription>
+                  </div>
+                  <Button
+                    onClick={generateGraduationListDocx}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold h-9 px-4 rounded-xl flex items-center gap-2 shadow shadow-emerald-500/20 shrink-0"
+                    disabled={filteredRegistryStudents.length === 0}
+                  >
+                    <Download className="h-4 w-4" />
+                    Download Graduation List
+                  </Button>
                 </CardHeader>
                 <CardContent className="space-y-6">
                   {/* Registry Filters */}
@@ -6333,13 +7048,16 @@ export default function AdminDashboard() {
                           <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3 text-center">
                             Receipt
                           </TableHead>
+                          <TableHead className="text-slate-600 dark:text-slate-400 font-bold px-4 py-3 text-center">
+                            Actions
+                          </TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody className="divide-y divide-slate-200 dark:divide-slate-900 font-medium">
                         {filteredRegistryStudents.length === 0 ? (
                           <TableRow>
                             <TableCell
-                              colSpan={8}
+                              colSpan={9}
                               className="text-center py-12 text-slate-500 italic"
                             >
                               No candidates matching filters found.
@@ -6456,6 +7174,22 @@ export default function AdminDashboard() {
                                   </span>
                                 )}
                               </TableCell>
+                               {/* Generate Letter Action */}
+                               <TableCell className="px-4 py-2.5 text-center">
+                                 <Button
+                                   size="xs"
+                                   onClick={() => {
+                                     setVerLetterStudent(st);
+                                     setVerLetterStep("form");
+                                     setVerLetterPdfBlob(null);
+                                     setVerLetterInputs({ yourNumber: "", ourRef: "", myNumber: "", fileNumber: "", refLetterDate: "", addressee: "", staffName: "" });
+                                   }}
+                                   className="h-7 text-[10px] px-2.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white font-bold flex items-center gap-1 shadow shadow-violet-500/20 mx-auto"
+                                 >
+                                   <FileText className="h-3.5 w-3.5" />
+                                   Generate Letter
+                                 </Button>
+                               </TableCell>
                             </TableRow>
                           ))
                         )}
@@ -6464,6 +7198,195 @@ export default function AdminDashboard() {
                   </div>
                 </CardContent>
               </Card>
+            </div>
+          )}
+
+          {/* ── VERIFICATION LETTER MODAL ── */}
+          {verLetterStudent && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={() => setVerLetterStudent(null)}>
+              <div
+                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl w-full max-w-2xl max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* Modal Header */}
+                <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
+                  <div>
+                    <h2 className="text-base font-bold text-slate-900 dark:text-white">Verification Letter</h2>
+                    <p className="text-[11px] text-slate-500 mt-0.5">{verLetterStudent.full_name || verLetterStudent.name_with_initials}</p>
+                  </div>
+                  <button
+                    onClick={() => setVerLetterStudent(null)}
+                    className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+
+                {/* Step: Form */}
+                {verLetterStep === "form" && (
+                  <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <Label className="text-[10px] uppercase font-bold text-slate-500">Your Number</Label>
+                        <Input
+                          value={verLetterInputs.yourNumber}
+                          onChange={(e) => setVerLetterInputs((p) => ({ ...p, yourNumber: e.target.value }))}
+                          placeholder="e.g. AR/123/2024"
+                          className="h-8 text-xs rounded-lg bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-[10px] uppercase font-bold text-slate-500">Our Ref</Label>
+                        <Input
+                          value={verLetterInputs.ourRef}
+                          onChange={(e) => setVerLetterInputs((p) => ({ ...p, ourRef: e.target.value }))}
+                          placeholder="e.g. REG/VER/2024"
+                          className="h-8 text-xs rounded-lg bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-[10px] uppercase font-bold text-slate-500">My Number</Label>
+                        <Input
+                          value={verLetterInputs.myNumber}
+                          onChange={(e) => setVerLetterInputs((p) => ({ ...p, myNumber: e.target.value }))}
+                          placeholder="Your reference number"
+                          className="h-8 text-xs rounded-lg bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-[10px] uppercase font-bold text-slate-500">File Number</Label>
+                        <Input
+                          value={verLetterInputs.fileNumber}
+                          onChange={(e) => setVerLetterInputs((p) => ({ ...p, fileNumber: e.target.value }))}
+                          placeholder="e.g. FILE/2024/001"
+                          className="h-8 text-xs rounded-lg bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-[10px] uppercase font-bold text-slate-500">Date of Requestee's Letter</Label>
+                      <Input
+                        value={verLetterInputs.refLetterDate}
+                        onChange={(e) => setVerLetterInputs((p) => ({ ...p, refLetterDate: e.target.value }))}
+                        placeholder="e.g. 10th January 2024"
+                        className="h-8 text-xs rounded-lg bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-[10px] uppercase font-bold text-slate-500">Addressee (press Enter for new line)</Label>
+                      <textarea
+                        value={verLetterInputs.addressee}
+                        onChange={(e) => setVerLetterInputs((p) => ({ ...p, addressee: e.target.value }))}
+                        placeholder={"The Secretary\nMinistry of Education\nColombo 07"}
+                        rows={4}
+                        className="w-full text-xs rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-blue-500 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-[10px] uppercase font-bold text-slate-500">Staff Member Name (Deputy Registrar)</Label>
+                      <Input
+                        value={verLetterInputs.staffName}
+                        onChange={(e) => setVerLetterInputs((p) => ({ ...p, staffName: e.target.value }))}
+                        placeholder="e.g. W.M.P. Wickramasinghe"
+                        className="h-8 text-xs rounded-lg bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900"
+                      />
+                    </div>
+
+                    {/* Student Data Preview */}
+                    <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 p-4 space-y-2">
+                      <p className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Student Data (auto-filled)</p>
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                        {[
+                          ["Name in Full", verLetterStudent.full_name || verLetterStudent.name_with_initials],
+                          ["Degree", verLetterStudent.degree_name_en],
+                          ["Reg. No.", verLetterStudent.registration_no],
+                          ["Index No.", verLetterStudent.index_no],
+                          ["Certificate No.", verLetterStudent.certificate_number],
+                          ["GPA & Class", `${verLetterStudent.gpa ? Number(verLetterStudent.gpa).toFixed(2) : "-"} — ${verLetterStudent.degree_class || "-"}`],
+                        ].map(([label, val]) => (
+                          <div key={label as string} className="flex gap-1">
+                            <span className="font-bold text-slate-600 dark:text-slate-400 shrink-0">{label}:</span>
+                            <span className="text-slate-800 dark:text-slate-200 break-all">{(val as string) || "-"}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+                      <Button
+                        variant="outline"
+                        onClick={() => setVerLetterStudent(null)}
+                        className="text-xs h-9 px-4 rounded-xl border-slate-200 dark:border-slate-800"
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        onClick={async () => {
+                          setVerLetterGenerating(true);
+                          try {
+                            const blob = await generateVerificationLetterPDF(verLetterStudent, verLetterInputs);
+                            setVerLetterPdfBlob(blob);
+                            setVerLetterStep("preview");
+                          } catch (err) {
+                            console.error("Letter generation failed:", err);
+                            setErrorMsg("Failed to generate verification letter.");
+                          } finally {
+                            setVerLetterGenerating(false);
+                          }
+                        }}
+                        disabled={verLetterGenerating}
+                        className="bg-violet-600 hover:bg-violet-700 text-white font-bold text-xs h-9 px-5 rounded-xl flex items-center gap-2 shadow shadow-violet-500/20"
+                      >
+                        {verLetterGenerating ? (
+                          <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Generating...</>
+                        ) : (
+                          <><FileText className="h-3.5 w-3.5" /> Generate Letter</>
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Step: Preview */}
+                {verLetterStep === "preview" && verLetterPdfBlob && (
+                  <div className="flex-1 flex flex-col overflow-hidden">
+                    <div className="flex-1 min-h-[500px]">
+                      <iframe
+                        src={URL.createObjectURL(verLetterPdfBlob)}
+                        className="w-full h-full min-h-[500px]"
+                        title="Verification Letter Preview"
+                      />
+                    </div>
+                    <div className="px-6 py-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3 shrink-0">
+                      <Button
+                        variant="outline"
+                        onClick={() => setVerLetterStep("form")}
+                        className="text-xs h-9 px-4 rounded-xl border-slate-200 dark:border-slate-800"
+                      >
+                        ← Back to Edit
+                      </Button>
+                      <Button
+                        onClick={() => {
+                          if (!verLetterPdfBlob) return;
+                          const url = URL.createObjectURL(verLetterPdfBlob);
+                          const a = document.createElement("a");
+                          a.href = url;
+                          a.download = `Verification_Letter_${verLetterStudent.registration_no || verLetterStudent.index_no}.pdf`;
+                          a.click();
+                          URL.revokeObjectURL(url);
+                        }}
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-9 px-5 rounded-xl flex items-center gap-2 shadow shadow-emerald-500/20"
+                      >
+                        <Download className="h-3.5 w-3.5" />
+                        Download PDF
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </main>

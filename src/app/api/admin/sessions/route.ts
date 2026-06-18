@@ -19,19 +19,90 @@ export async function GET() {
       );
       const activeYear = activeYearRes.rows[0]?.convocation_year || "2026";
 
-      // Get count of students assigned to each session grouped by faculty and degree type
-      const res = await client.query(
-        `
-        SELECT s.faculty, d.type as degree_type, s.session_number, COUNT(*) as student_count
-        FROM students s
-        LEFT JOIN degrees d ON s.degree_id = d.id
-        WHERE s.session_number IS NOT NULL AND s.verification_status = 'Approved' AND s.convocation_year = $1
-        GROUP BY s.faculty, d.type, s.session_number
-        ORDER BY s.session_number ASC, s.faculty ASC
-      `,
-        [activeYear],
+      // 1. Fetch sessions
+      const sessionsRes = await client.query('SELECT * FROM convocation_sessions ORDER BY session_number ASC');
+      const sessions = sessionsRes.rows;
+
+      // 2. Fetch faculties
+      const facultiesRes = await client.query('SELECT * FROM faculties ORDER BY name ASC');
+      const faculties = facultiesRes.rows;
+
+      // 3. Fetch degrees
+      const degreesRes = await client.query('SELECT * FROM degrees ORDER BY name_en ASC');
+      const degrees = degreesRes.rows;
+
+      // 4. Fetch all approved students for this convocation year
+      const studentsRes = await client.query(
+        `SELECT s.id, s.faculty, s.attending_convocation, s.seat_number, s.session_number, s.degree_id, d.type as degree_type
+         FROM students s
+         LEFT JOIN degrees d ON s.degree_id = d.id
+         WHERE s.verification_status = 'Approved' AND s.convocation_year = $1`,
+        [activeYear]
       );
-      return res.rows;
+      const students = studentsRes.rows;
+
+      // Build group definitions
+      const groupNames = [
+        ...faculties.map((f: any) => `${f.name} (Internal)`),
+        "All External Degrees"
+      ];
+
+      const groupStats = groupNames.map((groupName) => {
+        // Find mapped session
+        const mappedSession = sessions.find(
+          (s: any) => s.faculty_1 === groupName || s.faculty_2 === groupName
+        );
+
+        // Find degrees belonging to this group
+        const groupDegrees = degrees.filter((d: any) => {
+          if (groupName === "All External Degrees") {
+            return d.type === "External";
+          } else {
+            const facultyName = groupName.replace(" (Internal)", "");
+            return d.faculty === facultyName && d.type === "Internal";
+          }
+        });
+
+        // Filter approved students in this group
+        const groupStudents = students.filter((s: any) => {
+          if (groupName === "All External Degrees") {
+            return s.degree_type === "External";
+          } else {
+            const facultyName = groupName.replace(" (Internal)", "");
+            return s.faculty === facultyName && s.degree_type === "Internal";
+          }
+        });
+
+        // Attending students only
+        const attendingStudents = groupStudents.filter((s: any) => s.attending_convocation === true);
+        const allocatedAttending = attendingStudents.filter((s: any) => s.seat_number !== null && s.session_number !== null);
+
+        // Attending students per degree
+        const degreeStats = groupDegrees.map((deg: any) => {
+          const count = attendingStudents.filter((s: any) => s.degree_id === deg.id).length;
+          return {
+            id: deg.id,
+            name: deg.name_en,
+            attendingCount: count
+          };
+        });
+
+        const isSeatingAllocated = attendingStudents.length > 0 && attendingStudents.length === allocatedAttending.length;
+
+        return {
+          groupName,
+          sessionNumber: mappedSession ? mappedSession.session_number : null,
+          sessionName: mappedSession ? mappedSession.session_name : null,
+          sessionDate: mappedSession ? mappedSession.session_date : null,
+          sessionTime: mappedSession ? mappedSession.session_time : null,
+          degreeCount: groupDegrees.length,
+          totalAttendingCount: attendingStudents.length,
+          degrees: degreeStats,
+          isSeatingAllocated
+        };
+      });
+
+      return groupStats;
     });
 
     return NextResponse.json({ success: true, data });
@@ -56,20 +127,14 @@ export async function POST(req: Request) {
     const { faculty, group, sessionNumber } = await req.json();
     const targetGroup = group || faculty;
 
-    if (!targetGroup || sessionNumber === undefined) {
+    if (!targetGroup) {
       return NextResponse.json(
-        { success: false, error: "Group and sessionNumber are required." },
+        { success: false, error: "Group is required." },
         { status: 400 },
       );
     }
 
-    const sessNum = parseInt(sessionNumber);
-    if (sessNum < 1) {
-      return NextResponse.json(
-        { success: false, error: "Session number must be greater than 0." },
-        { status: 400 },
-      );
-    }
+    let sessNum = sessionNumber !== undefined ? parseInt(sessionNumber) : undefined;
 
     const result = await runAsAdmin(async (client) => {
       // Get the active convocation year
@@ -77,6 +142,26 @@ export async function POST(req: Request) {
         "SELECT convocation_year FROM registration_windows WHERE is_active = TRUE LIMIT 1",
       );
       const activeYear = activeYearRes.rows[0]?.convocation_year || "2026";
+
+      if (sessNum === undefined) {
+        // Look up the mapped session for this group
+        const sessionRes = await client.query(
+          "SELECT session_number FROM convocation_sessions WHERE faculty_1 = $1 OR faculty_2 = $1 LIMIT 1",
+          [targetGroup]
+        );
+        if (sessionRes.rows.length === 0) {
+          throw new Error(`Group ${targetGroup} has not been allocated to any session in the Session Allocation tab yet.`);
+        }
+        sessNum = sessionRes.rows[0].session_number;
+      }
+
+      if (sessNum === undefined || sessNum === null) {
+        throw new Error("Invalid session number.");
+      }
+
+      if (sessNum < 1) {
+        throw new Error("Session number must be greater than 0.");
+      }
 
       // 1. Verify session limit: max 2 groups per session
       const assignedRes = await client.query(

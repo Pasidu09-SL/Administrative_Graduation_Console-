@@ -7,11 +7,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ThemeToggle } from '@/components/ThemeToggle';
-import { GraduationCap, ShieldCheck, Mail, KeyRound, Loader2, X, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { GraduationCap, ShieldCheck, KeyRound, Loader2, X, AlertCircle, CheckCircle2 } from 'lucide-react';
 
 export default function EntryPage() {
   const router = useRouter();
-  const [email, setEmail] = useState('');
   const [registrationNo, setRegistrationNo] = useState('');
   const [nicNo, setNicNo] = useState('');
   const [token, setToken] = useState('');
@@ -19,43 +18,21 @@ export default function EntryPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
-  const [isEmailLocked, setIsEmailLocked] = useState(false);
-  const [isTokenMissing, setIsTokenMissing] = useState(false);
   const [isPortalClosed, setIsPortalClosed] = useState(false);
-  const [hasToken, setHasToken] = useState<boolean | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const emailParam = params.get('email');
     const tokenParam = params.get('token');
     const errorParam = params.get('error');
     
-    let portalClosed = false;
+    if (tokenParam) {
+      setToken(tokenParam);
+    }
+
     if (errorParam === 'Portal Closed') {
-      portalClosed = true;
       setIsPortalClosed(true);
-    }
-
-    if (!tokenParam) {
-      setHasToken(true);
-      setIsTokenMissing(true);
-      if (portalClosed) {
-        setError('Portal Closed: Registration access is currently inactive outside the configured timeline.');
-      } else {
-        setError('Secure Access Required: Please click the unique magic link sent to your email.');
-      }
-      return;
-    }
-
-    if (emailParam) {
-      setEmail(emailParam);
-      setIsEmailLocked(true);
-    }
-    setToken(tokenParam || '');
-    setIsTokenMissing(false);
-    setHasToken(true);
-
-    if (errorParam) {
+      setError('Portal Closed: Registration access is currently inactive outside the configured timeline.');
+    } else if (errorParam) {
       setError(errorParam);
     }
   }, []);
@@ -74,18 +51,9 @@ export default function EntryPage() {
     }
   }, [info]);
 
-  if (hasToken === null) {
-    return (
-      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center font-sans">
-        <Loader2 className="h-8 w-8 text-blue-600 animate-spin" />
-        <span className="text-xs font-bold text-slate-500 mt-2">Checking session parameters...</span>
-      </div>
-    );
-  }
-
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !registrationNo || !nicNo || !token) return;
+    if (!registrationNo || !nicNo) return;
     
     setLoading(true);
     setError(null);
@@ -95,7 +63,7 @@ export default function EntryPage() {
       const res = await fetch('/api/student/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, registration_no: registrationNo, nic_no: nicNo, token }),
+        body: JSON.stringify({ registration_no: registrationNo, nic_no: nicNo, token }),
       });
 
       const data = await res.json();
@@ -218,40 +186,8 @@ export default function EntryPage() {
                     Registration access is currently inactive outside the configured timeline. Please contact the Exam Division if you require assistance.
                   </div>
                 </div>
-              ) : isTokenMissing ? (
-                <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 text-red-700 dark:text-red-400 rounded-xl text-xs font-bold flex items-start gap-2">
-                  <AlertCircle className="h-4 w-4 text-red-600 dark:text-red-500 shrink-0 mt-0.5" />
-                  <div>
-                    <span className="block font-black uppercase text-[10px] tracking-wider text-red-655 dark:text-red-450 mb-1">Access Restricted</span>
-                    To log in, please click the secure link sent to your university email. If you haven't received it, contact the Exam Division.
-                  </div>
-                </div>
               ) : null}
                 <form onSubmit={handleLogin} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="email" className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
-                      University Email Address
-                    </Label>
-                    <div className="relative">
-                      <Input
-                        id="email"
-                        type="email"
-                        placeholder="student@uni.ac.lk"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        required
-                        disabled={isEmailLocked || isTokenMissing}
-                        className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl pl-10 text-sm h-11 disabled:opacity-75 disabled:cursor-not-allowed"
-                      />
-                      <Mail className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-400 dark:text-slate-600" />
-                    </div>
-                    {isEmailLocked && !isTokenMissing && (
-                      <p className="text-[10px] text-blue-600 dark:text-blue-400 font-bold mt-1">
-                        ✓ Email pre-filled and locked from verification link.
-                      </p>
-                    )}
-                  </div>
-
                   <div className="space-y-2">
                     <Label htmlFor="registrationNo" className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
                       Student Registration Number
@@ -264,7 +200,6 @@ export default function EntryPage() {
                         value={registrationNo}
                         onChange={(e) => setRegistrationNo(e.target.value)}
                         required
-                        disabled={isTokenMissing}
                         className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl pl-10 text-sm h-11 disabled:opacity-75"
                       />
                       <KeyRound className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-400 dark:text-slate-600" />
@@ -283,7 +218,6 @@ export default function EntryPage() {
                         value={nicNo}
                         onChange={(e) => setNicNo(e.target.value)}
                         required
-                        disabled={isTokenMissing}
                         className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl pl-10 text-sm h-11 disabled:opacity-75"
                       />
                       <ShieldCheck className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-400 dark:text-slate-600" />
@@ -292,7 +226,7 @@ export default function EntryPage() {
 
                   <Button
                     type="submit"
-                    disabled={loading || isTokenMissing}
+                    disabled={loading}
                     className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold h-11 rounded-xl mt-2 relative transition-colors shadow-lg shadow-blue-500/20 disabled:opacity-50"
                   >
                     {loading ? (
