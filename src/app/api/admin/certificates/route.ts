@@ -145,63 +145,13 @@ function drawGradingTable(page: any, font: any, fontBold: any, yTop: number) {
   }
 }
 
-function patchFontkit() {
-  try {
-    const fontkitDir = path.join(process.cwd(), 'node_modules', '@pdf-lib', 'fontkit');
-    if (!fs.existsSync(fontkitDir)) return;
 
-    const replaceInFile = (filePath: string) => {
-      let content = fs.readFileSync(filePath, 'utf8');
-      let changed = false;
-
-      const regex1 = /var\s+syllable\s*=\s*glyphs\s*\[\s*start\s*\]\s*\.\s*shaperInfo\s*\.\s*syllable\s*;([\s\S]*?)while\s*\(\s*\+\+\s*start\s*<\s*glyphs\.length\s*&&\s*glyphs\s*\[\s*start\s*\]\s*\.\s*shaperInfo\s*\.\s*syllable\s*===\s*syllable\s*\)/g;
-      const replacementStr1 = `var syllable = glyphs[start].shaperInfo ? glyphs[start].shaperInfo.syllable : null;$1while (++start < glyphs.length && (glyphs[start].shaperInfo ? glyphs[start].shaperInfo.syllable : null) === syllable)`;
-
-      if (regex1.test(content)) {
-        content = content.replace(regex1, replacementStr1);
-        changed = true;
-      }
-
-      const regex2 = /var\s+info\s*=\s*glyphs\s*\[\s*start\s*\]\s*\.\s*shaperInfo\s*;\s*var\s+type\s*=\s*info\s*\.\s*syllableType\s*;/g;
-      const replacementStr2 = `var info = glyphs[start].shaperInfo;\n    if (!info) continue;\n    var type = info.syllableType;`;
-
-      if (regex2.test(content)) {
-        content = content.replace(regex2, replacementStr2);
-        changed = true;
-      }
-
-      if (changed) {
-        fs.writeFileSync(filePath, content, 'utf8');
-        console.log(`[Fontkit Patch] Successfully patched fontkit at: ${filePath}`);
-      }
-    };
-
-    const walk = (dir: string) => {
-      const files = fs.readdirSync(dir);
-      for (const file of files) {
-        const fullPath = path.join(dir, file);
-        const stat = fs.statSync(fullPath);
-        if (stat.isDirectory()) {
-          walk(fullPath);
-        } else if (file.endsWith('.js')) {
-          replaceInFile(fullPath);
-        }
-      }
-    };
-
-    walk(fontkitDir);
-  } catch (err: any) {
-    console.error('Failed to patch fontkit dynamically:', err.message);
-  }
-}
 
 /**
  * Automatically creates mock templates for Internal Front/Back and External Front/Back
  * to act as cached high-resolution layouts for coordinate text injection.
  */
 async function ensureTemplates() {
-  // Apply the dynamic fontkit patch to prevent complex Sinhala/Tamil character crashes
-  patchFontkit();
 
   const dir = path.join(process.cwd(), 'public', 'templates');
   if (!fs.existsSync(dir)) {
