@@ -230,12 +230,6 @@ async function ensureTemplates() {
     }
   }
 
-  const logoPath = path.join(dir, 'RUSL.png');
-  let logoBytes: Buffer | null = null;
-  if (fs.existsSync(logoPath)) {
-    logoBytes = fs.readFileSync(logoPath);
-  }
-
   const frontTypes: ('Internal' | 'External')[] = ['Internal', 'External'];
 
   for (const type of frontTypes) {
@@ -262,142 +256,6 @@ async function ensureTemplates() {
       height: 795.89,
       borderColor: rgb(0.15, 0.15, 0.15),
       borderWidth: 0.5,
-    });
-
-    // Logo
-    if (logoBytes) {
-      const logoImage = await doc.embedPng(logoBytes);
-      const logoSize = 113.386; // 40mm x 40mm
-      page.drawImage(logoImage, {
-        x: (595.275 - logoSize) / 2,
-        y: 841.89 - 70.866 - logoSize, // 25mm margin from top
-        width: logoSize,
-        height: logoSize,
-      });
-    }
-
-    // University Name
-    const timesBold = await doc.embedFont(StandardFonts.TimesRomanBold);
-    const timesRoman = await doc.embedFont(StandardFonts.TimesRoman);
-    const timesItalic = await doc.embedFont(StandardFonts.TimesRomanItalic);
-
-    const uniText = "RAJARAJA UNIVERSITY OF SRI LANKA";
-    const uniWidth = timesBold.widthOfTextAtSize(uniText, 24);
-    page.drawText(uniText, {
-      x: (595.275 - uniWidth) / 2,
-      y: 620,
-      font: timesBold,
-      size: 24,
-      color: rgb(0.1, 0.1, 0.1),
-    });
-
-    // Preamble
-    const preambleText = type === 'Internal'
-      ? "Having successfully completed the prescribed courses of study and the examinations of this university as an internal candidate"
-      : "Having successfully completed the prescribed courses of study and the examinations of this university as an external candidate";
-    drawCenteredParagraph(page, preambleText, timesItalic, 12, 560, 453.543, 6);
-
-    // Admission Bridge
-    const bridgeText = "was admitted to the degree of";
-    const bridgeWidth = timesRoman.widthOfTextAtSize(bridgeText, 12);
-    page.drawText(bridgeText, {
-      x: (595.275 - bridgeWidth) / 2,
-      y: 460,
-      font: timesRoman,
-      size: 12,
-      color: rgb(0.2, 0.2, 0.2),
-    });
-
-    // Conferment static bridge texts
-    const andWidth = timesRoman.widthOfTextAtSize("and", 12);
-    page.drawText("and", {
-      x: (595.275 - andWidth) / 2,
-      y: 325,
-      font: timesRoman,
-      size: 12,
-      color: rgb(0.2, 0.2, 0.2),
-    });
-
-    const confWidth = timesRoman.widthOfTextAtSize("was conferred this degree at the", 12);
-    page.drawText("was conferred this degree at the", {
-      x: (595.275 - confWidth) / 2,
-      y: 300,
-      font: timesRoman,
-      size: 12,
-      color: rgb(0.2, 0.2, 0.2),
-    });
-
-    const convWidth = timesBold.widthOfTextAtSize("convocation", 14);
-    page.drawText("convocation", {
-      x: (595.275 - convWidth) / 2,
-      y: 270,
-      font: timesBold,
-      size: 14,
-      color: rgb(0.1, 0.1, 0.1),
-    });
-
-    // Signature blocks
-    const labelY = 120;
-    const lineY = 140;
-
-    // Registrar Line & Label
-    page.drawLine({
-      start: { x: 39.213, y: lineY },
-      end: { x: 159.213, y: lineY },
-      thickness: 0.75,
-      color: rgb(0.2, 0.2, 0.2),
-    });
-    const regLabel = "Registrar";
-    const regLabelWidth = timesRoman.widthOfTextAtSize(regLabel, 10);
-    page.drawText(regLabel, {
-      x: 99.213 - (regLabelWidth / 2),
-      y: labelY,
-      font: timesRoman,
-      size: 10,
-      color: rgb(0.2, 0.2, 0.2),
-    });
-
-    // Vice Chancellor Line & Label
-    page.drawLine({
-      start: { x: 436.063, y: lineY },
-      end: { x: 556.063, y: lineY },
-      thickness: 0.75,
-      color: rgb(0.2, 0.2, 0.2),
-    });
-    const vcLabel = "Vice Chancellor";
-    const vcLabelWidth = timesRoman.widthOfTextAtSize(vcLabel, 10);
-    page.drawText(vcLabel, {
-      x: 496.063 - (vcLabelWidth / 2),
-      y: labelY,
-      font: timesRoman,
-      size: 10,
-      color: rgb(0.2, 0.2, 0.2),
-    });
-
-    // Red Seal circle
-    const sealRadius = 42.52; // 30mm diameter -> 15mm radius
-    page.drawCircle({
-      x: 297.638,
-      y: lineY,
-      size: sealRadius,
-      borderColor: rgb(0.8, 0.1, 0.1),
-      borderWidth: 1.5,
-    });
-    page.drawCircle({
-      x: 297.638,
-      y: lineY,
-      size: sealRadius - 3,
-      borderColor: rgb(0.8, 0.1, 0.1),
-      borderWidth: 0.5,
-    });
-    const sealText = "SEAL";
-    const sealTextWidth = timesBold.widthOfTextAtSize(sealText, 8);
-    page.drawText(sealText, {
-      x: 297.638 - (sealTextWidth / 2),
-      y: lineY - 3,
-      font: timesBold,
-      size: 8,
-      color: rgb(0.8, 0.1, 0.1),
     });
 
     const bytes = await doc.save();
@@ -427,52 +285,6 @@ async function ensureTemplates() {
       height: 795.89,
       borderColor: rgb(0.15, 0.15, 0.15),
       borderWidth: 0.5,
-    });
-
-    // 1. Logo scaled down (25mm x 25mm = 70.866 points)
-    if (logoBytes) {
-      const logoImage = await doc.embedPng(logoBytes);
-      const logoSize = 70.866;
-      page.drawImage(logoImage, {
-        x: (595.275 - logoSize) / 2,
-        y: 841.89 - 40 - logoSize, // 40pt margin from top
-        width: logoSize,
-        height: logoSize,
-      });
-    }
-
-    // 2. Reverse branding text
-    const timesBold = await doc.embedFont(StandardFonts.TimesRomanBold);
-    const timesRoman = await doc.embedFont(StandardFonts.TimesRoman);
-    const uniText = "RAJARAJA UNIVERSITY OF SRI LANKA";
-    const uniWidth = timesBold.widthOfTextAtSize(uniText, 16);
-    page.drawText(uniText, {
-      x: (595.275 - uniWidth) / 2,
-      y: 710,
-      font: timesBold,
-      size: 16,
-      color: rgb(0.1, 0.1, 0.1),
-    });
-
-    // 3. Section A: Grading Scheme Table
-    drawGradingTable(page, timesRoman, timesBold, 680);
-
-    // 4. Reverse footer (replicate lines matching Side 1 grid heights)
-    const lineY = 140;
-
-    // Registrar line
-    page.drawLine({
-      start: { x: 39.213, y: lineY },
-      end: { x: 159.213, y: lineY },
-      thickness: 0.75,
-      color: rgb(0.2, 0.2, 0.2),
-    });
-    // Vice Chancellor line
-    page.drawLine({
-      start: { x: 436.063, y: lineY },
-      end: { x: 556.063, y: lineY },
-      thickness: 0.75,
-      color: rgb(0.2, 0.2, 0.2),
     });
 
     const bytes = await doc.save();

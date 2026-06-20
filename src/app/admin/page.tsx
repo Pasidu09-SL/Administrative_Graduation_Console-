@@ -41,6 +41,7 @@ import {
   LogOut,
   Edit,
   Mail,
+  Eye,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { useRouter } from "next/navigation";
@@ -55,7 +56,7 @@ import {
   TabStopType,
   LeaderType,
 } from "docx";
-import jsPDF from "jspdf";
+
 
 const wrapPlaceholdersInHtml = (htmlStr: string) => {
   if (typeof window === "undefined" || !htmlStr) return htmlStr;
@@ -183,6 +184,7 @@ export default function AdminDashboard() {
   const [verLetterStudent, setVerLetterStudent] = useState<any | null>(null);
   const [verLetterStep, setVerLetterStep] = useState<"form" | "preview">("form");
   const [verLetterGenerating, setVerLetterGenerating] = useState(false);
+  const [showVerLetterPreviewModal, setShowVerLetterPreviewModal] = useState(false);
   const [verLetterInputs, setVerLetterInputs] = useState({
     yourNumber: "",
     ourRef: "",
@@ -193,6 +195,50 @@ export default function AdminDashboard() {
     staffName: "",
   });
   const [verLetterPdfBlob, setVerLetterPdfBlob] = useState<Blob | null>(null);
+  const [verLetterPreviewUrl, setVerLetterPreviewUrl] = useState<string | null>(null);
+
+  // Cleanup preview state when the student letter modal is closed
+  useEffect(() => {
+    if (!verLetterStudent) {
+      setVerLetterPdfBlob(null);
+      setShowVerLetterPreviewModal(false);
+    }
+  }, [verLetterStudent]);
+
+  // Manage object URL lifecycle for verification letter PDF preview
+  useEffect(() => {
+    let url: string | null = null;
+    if (verLetterPdfBlob) {
+      url = URL.createObjectURL(verLetterPdfBlob);
+      setVerLetterPreviewUrl(url);
+    } else {
+      setVerLetterPreviewUrl(null);
+    }
+    return () => {
+      if (url) {
+        try {
+          URL.revokeObjectURL(url);
+        } catch (e) {
+          console.error("Failed to revoke URL:", e);
+        }
+      }
+      setVerLetterPreviewUrl(null);
+    };
+  }, [verLetterPdfBlob]);
+
+  const handlePreviewVerificationLetter = async () => {
+    if (!verLetterStudent) return;
+    setVerLetterGenerating(true);
+    try {
+      const blob = await generateVerificationLetterPDF(verLetterStudent, verLetterInputs);
+      setVerLetterPdfBlob(blob);
+      setShowVerLetterPreviewModal(true);
+    } catch (err) {
+      console.error("Verification letter preview generation failed:", err);
+    } finally {
+      setVerLetterGenerating(false);
+    }
+  };
 
   // Staff Authentication States
   const [staffUser, setStaffUser] = useState<any | null>(null);
@@ -265,6 +311,10 @@ export default function AdminDashboard() {
   const [layoutConfig, setLayoutConfig] = useState<any>(null);
   const [layoutLoading, setLayoutLoading] = useState(false);
   const [layoutSide, setLayoutSide] = useState<"front" | "back">("front");
+  const [certConfigTab, setCertConfigTab] = useState<"front" | "back_si" | "back_ta">("front");
+  const [mockStudentName, setMockStudentName] = useState("KUMARA A.B.C.D.E.F.");
+  const [selectedMockDegreeCode, setSelectedMockDegreeCode] = useState("");
+  const [mockPreviewDownloading, setMockPreviewDownloading] = useState(false);
 
   // 4. AUDIT STATE
   const [students, setStudents] = useState<any[]>([]);
@@ -512,8 +562,67 @@ export default function AdminDashboard() {
   const loadDegrees = async () => {
     const res = await fetch("/api/degrees");
     const json = await res.json();
-    if (res.ok) setDegrees(json.data);
+    if (res.ok) {
+      setDegrees(json.data);
+      if (json.data && json.data.length > 0) {
+        setSelectedMockDegreeCode((prev) => prev || json.data[0].code);
+      }
+    }
   };
+
+ // ─── FRONTEND COMPONENT ───
+const handleDownloadMockCertificate = async () => {
+  if (!layoutConfig) return;
+  setMockPreviewDownloading(true);
+  setErrorMsg(null);
+  
+  try {
+    const res = await fetch("/api/admin/certificate-layout/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        layoutConfig,
+        studentName: mockStudentName,
+        degreeCode: selectedMockDegreeCode,
+      }),
+    });
+
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      throw new Error(errJson.error || "Failed to generate PDF.");
+    }
+
+    // 1. Read the network stream as an arrayBuffer first
+    const buffer = await res.arrayBuffer();
+    
+    // 2. Validate that the browser actually received data bytes
+    if (buffer.byteLength === 0) {
+      throw new Error("Received an empty file from the server. Check your backend output.");
+    }
+
+    // 3. Reconstruct the blob inside the browser context
+    const blob = new Blob([buffer], { type: "application/pdf" });
+    const downloadUrl = URL.createObjectURL(blob);
+    
+    // 4. Trigger download link
+    const a = document.createElement("a");
+    a.href = downloadUrl;
+    a.download = `Mock_Certificate_${mockStudentName.replace(/\s+/g, "_")}.pdf`;
+    
+    document.body.appendChild(a);
+    a.click();
+    
+    // Clean up memory
+    document.body.removeChild(a);
+    URL.revokeObjectURL(downloadUrl);
+
+  } catch (err: any) {
+    console.error("Download fail:", err);
+    setErrorMsg(err.message || "Network error downloading certificate.");
+  } finally {
+    setMockPreviewDownloading(false);
+  }
+};
 
   const loadTimeline = async () => {
     const res = await fetch("/api/timeline");
@@ -915,8 +1024,19 @@ export default function AdminDashboard() {
     const allStudents = filteredRegistryStudents;
 
     // Helper: determine if a degree is a bachelor's
-    const isBachelors = (degreeName: string) =>
-      /bachelor/i.test(degreeName || "");
+    const isBachelors = (degreeName: string) => {
+      const name = (degreeName || "").toLowerCase();
+      // If it explicitly says "bachelor" or "bsc" or "ba" or "bba" or "btech", it is a bachelor's degree
+      if (/bachelor|bsc|b\.sc|ba\b|b\.a|bba|b\.b\.a|btech|b\.tech/i.test(name)) {
+        return true;
+      }
+      // If it contains words indicating postgraduate, diploma, or certificate, it is NOT a bachelor's degree
+      if (/diploma|certificate|postgraduate|master|doctor|pgd|phd/i.test(name)) {
+        return false;
+      }
+      // Default: assume it is a bachelor's degree
+      return true;
+    };
 
     // Sort class order for attending
     const CLASS_ORDER: Record<string, number> = {
@@ -935,6 +1055,7 @@ export default function AdminDashboard() {
       if (/first/i.test(c)) return "First Class";
       if (/upper/i.test(c)) return "Second Class (Upper Division)";
       if (/lower/i.test(c)) return "Second Class (Lower Division)";
+      if (/pass|general/i.test(c)) return "Pass";
       return "Pass";
     };
 
@@ -1009,7 +1130,7 @@ export default function AdminDashboard() {
             "Pass": [],
           };
           for (const st of attending) {
-            const cls = normaliseClass(st.degree_class);
+            const cls = normaliseClass(st.class || st.degree_class);
             classGroups[cls]?.push(st.full_name || st.name_with_initials || "");
           }
 
@@ -1042,7 +1163,7 @@ export default function AdminDashboard() {
             "Pass": [],
           };
           for (const st of inAbsentia) {
-            const cls = normaliseClass(st.degree_class);
+            const cls = normaliseClass(st.class || st.degree_class);
             absentiaGroups[cls]?.push(st.full_name || st.name_with_initials || "");
           }
 
@@ -1120,12 +1241,17 @@ export default function AdminDashboard() {
     });
 
     const blob = await Packer.toBlob(doc);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `Graduation_List_${registryYear || activeConvocationYear}.docx`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const dataUrl = reader.result as string;
+      const a = document.createElement("a");
+      a.href = dataUrl;
+      a.download = `Graduation_List_${registryYear || activeConvocationYear}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    };
+    reader.readAsDataURL(blob);
   };
 
 // ─── DOCUMENT 2: Verification Letter PDF ────────────────────────────────
@@ -1133,253 +1259,20 @@ const generateVerificationLetterPDF = async (
   student: any,
   inputs: typeof verLetterInputs
 ): Promise<Blob> => {
-  const doc = new jsPDF({ unit: "mm", format: "a4" });
-  const W = 210;
-  const margin = 20;
-  const contentWidth = W - margin * 2; // Exactly 170mm print space
-  let y = 15;
-
-  // Helper: Render complex scripts via canvas to get perfect native browser shaping
-  const renderComplexTextToDataURL = (
-    text: string, 
-    fontFamily: string, 
-    fontSizePx: number, 
-    isBold = false,
-    align: 'left' | 'right' = 'left'
-  ): string => {
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return "";
-
-    // Crisp high-resolution canvas bounds
-    canvas.width = 1200;
-    canvas.height = 80;
-    
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = "#000000";
-    ctx.font = `${isBold ? "bold" : "normal"} ${fontSizePx}px "${fontFamily}", sans-serif`;
-    ctx.textBaseline = "middle";
-
-    if (align === 'left') {
-      ctx.textAlign = "left";
-      ctx.fillText(text, 0, canvas.height / 2);
-    } else {
-      ctx.textAlign = "right";
-      ctx.fillText(text, canvas.width, canvas.height / 2);
-    }
-
-    return canvas.toDataURL("image/png");
-  };
-
-  // ── Load logo ──
-  const loadImageAsDataURL = (src: string): Promise<string> =>
-    new Promise((resolve, reject) => {
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.onload = () => {
-        const canvas = document.createElement("canvas");
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return reject("No canvas context");
-        ctx.filter = "grayscale(100%)";
-        ctx.drawImage(img, 0, 0);
-        resolve(canvas.toDataURL("image/png"));
-      };
-      img.onerror = reject;
-      img.src = src;
-    });
-
-  let logoDataUrl: string | null = null;
-  try {
-    logoDataUrl = await loadImageAsDataURL("/templates/RUSL.png");
-  } catch {
-    logoDataUrl = null;
-  }
-
-  // ── HEADER (3 columns aligned to logo base) ──
-  // Logo sits at y=15 with height=20mm (bottom is at y=35).
-  // Aligning text lines down so the final English lines hit precisely around y=34.5.
-  const headerTextY = y + 11.5;
-
-  // Center: Logo
-  if (logoDataUrl) {
-    const logoW = 20;
-    const logoH = 20;
-    const logoX = (W - logoW) / 2;
-    doc.addImage(logoDataUrl, "PNG", logoX, y, logoW, logoH);
-  } else {
-    doc.setFontSize(8);
-    doc.setFont("helvetica", "bold");
-    doc.text("[LOGO]", W / 2, y + 10, { align: "center" });
-  }
-
-  // Left Side: University Names (Perfect Browser Shaping via Canvas)
-  const sinhalaLeftImg = renderComplexTextToDataURL("රජරට විශ්වවිද්‍යාලය", "Abhaya Libre", 36, true, 'left');
-  const tamilLeftImg = renderComplexTextToDataURL("ராஜரட பல்கலைக்கழகம்", "Pavanam", 32, true, 'left');
-
-  if (sinhalaLeftImg) doc.addImage(sinhalaLeftImg, "PNG", margin, headerTextY - 3, 55, 4);
-  if (tamilLeftImg) doc.addImage(tamilLeftImg, "PNG", margin, headerTextY + 1.5, 55, 4);
-
-  // English (Latin stays native)
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(8);
-  doc.text("Rajarata University of Sri Lanka", margin, headerTextY + 9, { align: "left" });
-
-
-  // Right Side: Mihinthale Location Details
-  const sinhalaRightImg = renderComplexTextToDataURL("මිහින්තලේ, ශ්‍රී ලංකාව", "Abhaya Libre", 36, false, 'right');
-  const tamilRightImg = renderComplexTextToDataURL("மிஹிந்தலே, இலங்கை", "Pavanam", 32, false, 'right');
-
-  if (sinhalaRightImg) doc.addImage(sinhalaRightImg, "PNG", W - margin - 55, headerTextY - 3, 55, 4);
-  if (tamilRightImg) doc.addImage(tamilRightImg, "PNG", W - margin - 55, headerTextY + 1.5, 55, 4);
-
-  // English
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(8);
-  doc.text("Mihinthale Sri Lanka", W - margin, headerTextY + 9, { align: "right" });
-
-  y = 39; // Secure spacing beneath logo baseline bounds
-
-  // Header divider
-  doc.setDrawColor(0);
-  doc.setLineWidth(0.4);
-  doc.line(margin, y, W - margin, y);
-  y += 4;
-
-  // Tel / Fax Info Row
-  doc.setFontSize(7.5);
-  doc.setFont("helvetica", "normal");
-  doc.text("Tel: +94 25 226 5600  |  Fax: +94 25 226 5601  |  Email: registrar@rjt.ac.lk", W / 2, y, { align: "center" });
-  y += 4;
-
-  doc.line(margin, y, W - margin, y);
-  y += 7;
-
-  // ── REFERENCE COLUMNS (Strict Grid Structure) ──
-  doc.setFontSize(9);
-  const refLeft = margin;
-  const refRight = W / 2 + 14;
-  const labelW = 28;
-
-  // Row 1
-  doc.setFont("helvetica", "bold");
-  doc.text("Your Number:", refLeft, y);
-  doc.text("My Number:", refRight, y);
-  doc.setFont("helvetica", "normal");
-  doc.text(inputs.yourNumber || ".....................", refLeft + labelW, y);
-  doc.text(inputs.myNumber || ".....................", refRight + labelW, y);
-  y += 5.5;
-
-  // Row 2
-  doc.setFont("helvetica", "bold");
-  doc.text("Our Ref:", refLeft, y);
-  doc.text("File Number:", refRight, y);
-  doc.setFont("helvetica", "normal");
-  doc.text(inputs.ourRef || ".....................", refLeft + labelW, y);
-  doc.text(inputs.fileNumber || ".....................", refRight + labelW, y);
-  y += 5.5;
-
-  // Row 3
-  doc.setFont("helvetica", "bold");
-  doc.text("Date:", refRight, y);
-  doc.setFont("helvetica", "normal");
-  const today = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
-  doc.text(today, refRight + labelW, y);
-  y += 11;
-
-  // ── ADDRESSEE ──
-  const addressLines = (inputs.addressee || "").split("\n");
-  doc.setFontSize(9.5);
-  doc.setFont("helvetica", "normal");
-  for (const line of addressLines) {
-    doc.text(line, margin, y);
-    y += 5;
-  }
-  y += 2;
-
-  // ── SUBJECT (Dynamic wrap and underlines) ──
-  const subject = `Verification of Degree Certificate - ${student.name_with_initials}`;
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(9.5);
-  doc.text("Subject: ", margin, y);
-  
-  const subjectX = margin + doc.getTextWidth("Subject: ");
-  const maxSubjectW = W - margin - subjectX;
-  const wrappedSubject = doc.splitTextToSize(subject, maxSubjectW);
-  
-  doc.setFont("helvetica", "normal");
-  wrappedSubject.forEach((line: string, index: number) => {
-    doc.text(line, subjectX, y);
-    const lineW = doc.getTextWidth(line);
-    doc.line(subjectX, y + 0.5, subjectX + lineW, y + 0.5);
-    if (index < wrappedSubject.length - 1) y += 5;
-  });
-  y += 8;
-
-  // ── REFERENCE SENTENCE ──
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(9.5);
-  const refDate = inputs.refLetterDate || "........................";
-  const refSentence = `This has reference to your letter ${refDate} on the above subject.`;
-  const refLines = doc.splitTextToSize(refSentence, contentWidth);
-  doc.text(refLines, margin, y);
-  y += refLines.length * 5 + 6;
-
-  // ── DETAIL FIELDS (Bounded Column Widths matching layout lines) ──
-  const fields: [string, string][] = [
-    ["Name of the Certificate", "Degree Certificate"],
-    ["Name in Full", student.full_name || student.name_with_initials || ""],
-    ["Degree", student.degree_name_en || ""],
-    ["Effective Date of the Degree", student.effective_date ? new Date(student.effective_date).toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" }) : (student.convocation_year || "")],
-    ["Graduation Date", (() => {
-      if (typeof convocationSessions === "undefined" || !student.session_number) return student.convocation_year || "";
-      const sess = convocationSessions.find((s: any) => s.session_number === student.session_number);
-      return sess?.session_date ? new Date(sess.session_date).toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" }) : (student.convocation_year || "");
-    })()],
-    ["Serial No. of the Certificate", student.certificate_number ? String(student.certificate_number) : ""],
-    ["Reg. NO / Index No.", `${student.registration_no || ""}  /  ${student.index_no || ""}`],
-    ["Final GPA & Class", `${student.gpa ? Number(student.gpa).toFixed(2) : " - "}${student.class ? " - " + student.class : ""}`],
-  ];
-
-  const col1Width = 62; 
-  const col2X = margin + col1Width; 
-  const col3X = col2X + 5; 
-  const maxValWidth = W - margin - col3X; // Rigid width clamp keeping values inside contentWidth boundary
-
-  doc.setFontSize(9.5);
-  fields.forEach(([label, value], i) => {
-    doc.setFont("helvetica", "bold");
-    doc.text(`${i + 1}.`, margin, y);
-    doc.text(label, margin + 6, y);
-    
-    doc.setFont("helvetica", "normal");
-    doc.text("-", col2X, y);
-    
-    const wrappedVal = doc.splitTextToSize(value, maxValWidth);
-    doc.text(wrappedVal, col3X, y);
-    
-    y += wrappedVal.length > 1 ? wrappedVal.length * 5.2 : 6.5;
+  const response = await fetch("/api/admin/verification-letter", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ student, inputs }),
   });
 
-  y += 4;
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.error || "Failed to generate verification letter");
+  }
 
-  // ── CLOSING ──
-  const closing = "I am pleased to inform you that the above information is Genuine and the Degree has been awarded by the Rajarata University of Sri Lanka.";
-  const closingLines = doc.splitTextToSize(closing, contentWidth);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(9.5);
-  doc.text(closingLines, margin, y);
-  y += closingLines.length * 5 + 14;
-
-  // ── SIGNATURE ──
-  doc.setFont("helvetica", "normal");
-  doc.text(inputs.staffName || ".......................................................", margin, y);
-  y += 5.5;
-  doc.setFont("helvetica", "bold");
-  doc.text("Deputy Registrar", margin, y);
-
-  return doc.output("blob");
+  return response.blob();
 };
 
   useEffect(() => {
@@ -3833,7 +3726,7 @@ const generateVerificationLetterPDF = async (
                         htmlFor="excelFile"
                         className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400"
                       >
-                        Select Excel / CSV Registry Sheet
+                        Select Excel Student Registry 
                       </Label>
                       <Input
                         ref={fileInputRef}
@@ -3873,7 +3766,7 @@ const generateVerificationLetterPDF = async (
                 <CardHeader className="flex flex-row items-center justify-between pb-4">
                   <div>
                     <CardTitle className="text-base font-bold text-slate-950 dark:text-white">
-                      Imported Registry Candidates
+                      Imported Candidates Registry 
                     </CardTitle>
                     <CardDescription className="text-[11px] text-slate-500">
                       Manage and clean imported student records. Use bulk delete to undo wrong Excel ingestion sheets.
@@ -4045,7 +3938,7 @@ const generateVerificationLetterPDF = async (
                                 </div>
                               </TableCell>
                               <TableCell className="px-4 py-3 text-xs">
-                                <div className="text-slate-800 dark:text-slate-350 font-medium">{st.email}</div>
+                                <div className="font-bold text-slate-800 dark:text-slate-300">{st.email}</div>
                                 <div className="text-[10px] text-slate-500 mt-0.5">{st.contact_no}</div>
                               </TableCell>
                               <TableCell className="px-4 py-3 text-xs">
@@ -4053,7 +3946,7 @@ const generateVerificationLetterPDF = async (
                                 <div className="text-[10px] text-slate-500 mt-0.5">{st.degree_name_en}</div>
                               </TableCell>
                               <TableCell className="px-4 py-3 text-xs text-center">
-                                <div className="font-bold text-slate-800 dark:text-slate-200">GPA: {st.gpa !== null && st.gpa !== undefined ? st.gpa : '-'}</div>
+                                <div className="font-bold text-slate-800 dark:text-slate-200"> {st.gpa !== null && st.gpa !== undefined ? st.gpa : '-'}</div>
                                 <div className="text-[10px] text-slate-500 mt-0.5">{st.class || '-'}</div>
                               </TableCell>
                               <TableCell className="px-4 py-3 text-xs max-w-[200px] truncate" title={st.address}>
@@ -4062,9 +3955,6 @@ const generateVerificationLetterPDF = async (
                               <TableCell className="px-4 py-3 text-xs whitespace-nowrap">
                                 <div className="text-[10px] text-slate-600 dark:text-slate-400">
                                   <span className="font-semibold">Eff:</span> {st.effective_date ? st.effective_date.split('T')[0] : '-'}
-                                </div>
-                                <div className="text-[10px] text-slate-500 mt-0.5">
-                                  <span className="font-semibold">Grad:</span> {st.graduation_date ? st.graduation_date.split('T')[0] : '-'}
                                 </div>
                               </TableCell>
                               <TableCell className="px-4 py-3 text-center">
@@ -5855,26 +5745,19 @@ const generateVerificationLetterPDF = async (
           {activeTab === "cert_layout" && (
             <div className="space-y-6">
               <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-2xl shadow-sm">
-                <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 gap-4">
+                <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 gap-4 border-b border-slate-100 dark:border-slate-900">
                   <div>
                     <CardTitle className="text-base font-bold text-slate-950 dark:text-white">
                       Certificate Layout Manager
                     </CardTitle>
                     <CardDescription className="text-[11px] text-slate-500">
-                      Configure text alignments, titles, preambles, and coordinate placements for printed certificates.
+                      Enter certificate text parameters manually. Changes will render dynamically on generated student certificates.
                     </CardDescription>
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="text-xs font-bold text-slate-400">
                       Cohort: {activeConvocationYear}
                     </span>
-                    <Button
-                      onClick={handleResetLayoutConfig}
-                      variant="outline"
-                      className="border-slate-200 dark:border-slate-800 text-xs text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 h-9 rounded-xl font-bold"
-                    >
-                      Reset to Defaults
-                    </Button>
                     <Button
                       onClick={handleSaveLayoutConfig}
                       className="bg-blue-600 hover:bg-blue-700 text-white text-xs h-9 rounded-xl font-bold shadow-lg shadow-blue-500/10"
@@ -5883,7 +5766,7 @@ const generateVerificationLetterPDF = async (
                     </Button>
                   </div>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="pt-6">
                   {layoutLoading || !layoutConfig ? (
                     <div className="flex flex-col items-center justify-center py-20 gap-3">
                       <Loader2 className="h-8 w-8 text-blue-500 animate-spin" />
@@ -5891,608 +5774,348 @@ const generateVerificationLetterPDF = async (
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-                      {/* Left Column: Form Controls */}
-                      <div className="lg:col-span-5 space-y-6 max-h-[700px] overflow-y-auto pr-2">
-                        {/* Side Switcher */}
-                        <div className="bg-slate-100/50 dark:bg-slate-950/40 p-1 rounded-xl border border-slate-200 dark:border-slate-900 flex gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setLayoutSide("front")}
-                            className={`flex-1 py-2 text-xs font-extrabold rounded-lg transition-all ${
-                              layoutSide === "front"
-                                ? "bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm"
-                                : "text-slate-500 dark:text-slate-400 hover:text-slate-850 dark:hover:text-slate-200"
-                            }`}
-                          >
-                            Side 1 (Front - English)
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setLayoutSide("back")}
-                            className={`flex-1 py-2 text-xs font-extrabold rounded-lg transition-all ${
-                              layoutSide === "back"
-                                ? "bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm"
-                                : "text-slate-500 dark:text-slate-400 hover:text-slate-850 dark:hover:text-slate-200"
-                            }`}
-                          >
-                            Side 2 (Back - Sinhala & Tamil)
-                          </button>
+                      {/* Left Column: Form Controls (6 columns) */}
+                      <div className="lg:col-span-6 space-y-6">
+                        <div className="space-y-1">
+                          <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                            Layout Sections
+                          </span>
+                          <div className="flex gap-1 bg-slate-100 dark:bg-slate-950/60 p-1 rounded-xl border border-slate-200/60 dark:border-slate-800/80">
+                            {[
+                              { id: "front", label: "Front (English)" },
+                              { id: "back_si", label: "Back (Sinhala)" },
+                              { id: "back_ta", label: "Back (Tamil)" },
+                            ].map((tab) => (
+                              <button
+                                key={tab.id}
+                                type="button"
+                                onClick={() => setCertConfigTab(tab.id as any)}
+                                className={`flex-1 py-1.5 px-3 text-[11px] font-extrabold rounded-lg transition-all text-center leading-tight ${
+                                  certConfigTab === tab.id
+                                    ? "bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-sm"
+                                    : "text-slate-500 dark:text-slate-400 hover:text-slate-755 dark:hover:text-slate-200"
+                                }`}
+                              >
+                                {tab.label}
+                              </button>
+                            ))}
+                          </div>
                         </div>
 
-                        {/* Front Controls */}
-                        {layoutSide === "front" && (
-                          <div className="space-y-5">
-                            <h3 className="text-xs font-black uppercase tracking-wider text-slate-400">Front Placement & Scale</h3>
+                        {/* Tab Contents */}
+                        {certConfigTab === "front" && (
+                          <div className="space-y-4 bg-slate-50/50 dark:bg-slate-950/20 border border-slate-100 dark:border-slate-900 p-5 rounded-2xl">
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className="h-1.5 w-1.5 rounded-full bg-blue-500"></span>
+                              <h3 className="text-xs font-bold text-slate-800 dark:text-slate-200">Front Side Settings</h3>
+                            </div>
                             
-                            {/* Student Name position */}
-                            <div className="space-y-2">
-                              <div className="flex justify-between text-xs font-bold">
-                                <Label className="text-slate-700 dark:text-slate-350">Student Name Y-Coordinate</Label>
-                                <span className="text-blue-500">{layoutConfig.studentNameY} pt</span>
-                              </div>
-                              <input
-                                type="range"
-                                min="300"
-                                max="600"
-                                step="1"
-                                value={layoutConfig.studentNameY || 490}
-                                onChange={(e) => updateLayoutField("studentNameY", Number(e.target.value))}
-                                className="w-full h-1.5 bg-slate-200 dark:bg-slate-850 rounded-lg appearance-none cursor-pointer accent-blue-600"
-                              />
-                            </div>
-
-                            <div className="space-y-2">
-                              <div className="flex justify-between text-xs font-bold">
-                                <Label className="text-slate-700 dark:text-slate-350">Student Name Font Size</Label>
-                                <span className="text-blue-500">{layoutConfig.studentNameFontSize} pt</span>
-                              </div>
-                              <input
-                                type="range"
-                                min="16"
-                                max="36"
-                                step="0.5"
-                                value={layoutConfig.studentNameFontSize || 26}
-                                onChange={(e) => updateLayoutField("studentNameFontSize", Number(e.target.value))}
-                                className="w-full h-1.5 bg-slate-200 dark:bg-slate-850 rounded-lg appearance-none cursor-pointer accent-blue-600"
-                              />
-                            </div>
-
-                            {/* Degree Name position */}
-                            <div className="space-y-2">
-                              <div className="flex justify-between text-xs font-bold">
-                                <Label className="text-slate-700 dark:text-slate-350">Degree Name Y-Coordinate</Label>
-                                <span className="text-blue-500">{layoutConfig.degreeNameY} pt</span>
-                              </div>
-                              <input
-                                type="range"
-                                min="300"
-                                max="500"
-                                step="1"
-                                value={layoutConfig.degreeNameY || 405}
-                                onChange={(e) => updateLayoutField("degreeNameY", Number(e.target.value))}
-                                className="w-full h-1.5 bg-slate-200 dark:bg-slate-850 rounded-lg appearance-none cursor-pointer accent-blue-600"
-                              />
-                            </div>
-
-                            <div className="space-y-2">
-                              <div className="flex justify-between text-xs font-bold">
-                                <Label className="text-slate-700 dark:text-slate-350">Degree Name Font Size</Label>
-                                <span className="text-blue-500">{layoutConfig.degreeNameFontSize} pt</span>
-                              </div>
-                              <input
-                                type="range"
-                                min="12"
-                                max="28"
-                                step="1"
-                                value={layoutConfig.degreeNameFontSize || 20}
-                                onChange={(e) => updateLayoutField("degreeNameFontSize", Number(e.target.value))}
-                                className="w-full h-1.5 bg-slate-200 dark:bg-slate-850 rounded-lg appearance-none cursor-pointer accent-blue-600"
-                              />
-                            </div>
-
-                            {/* Digital Date */}
-                            <div className="space-y-2">
-                              <Label className="text-xs font-bold text-slate-750">Conferment Date (Digital Format)</Label>
+                            <div className="space-y-1.5">
+                              <Label htmlFor="f_date_digital" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">
+                                Date (Digital format)
+                              </Label>
                               <Input
-                                type="text"
-                                value={layoutConfig.dateDigitalText || ""}
-                                onChange={(e) => updateLayoutField("dateDigitalText", e.target.value)}
-                                className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-xs rounded-xl"
+                                id="f_date_digital"
+                                value={layoutConfig.f_date_digital || ""}
+                                onChange={(e) => updateLayoutField("f_date_digital", e.target.value)}
+                                className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 text-xs rounded-lg h-9"
+                                placeholder="e.g. 15th January 2023"
                               />
                             </div>
 
-                            <div className="space-y-2">
-                              <div className="flex justify-between text-xs font-bold">
-                                <Label className="text-slate-700 dark:text-slate-350">Digital Date Y-Coordinate</Label>
-                                <span className="text-blue-500">{layoutConfig.dateDigitalY} pt</span>
-                              </div>
-                              <input
-                                type="range"
-                                min="280"
-                                max="400"
-                                step="1"
-                                value={layoutConfig.dateDigitalY || 350}
-                                onChange={(e) => updateLayoutField("dateDigitalY", Number(e.target.value))}
-                                className="w-full h-1.5 bg-slate-200 dark:bg-slate-850 rounded-lg appearance-none cursor-pointer accent-blue-600"
-                              />
-                            </div>
-
-                            {/* Verbal Date */}
-                            <div className="space-y-2">
-                              <Label className="text-xs font-bold text-slate-750">Conferment Date (Verbal / Words)</Label>
+                            <div className="space-y-1.5">
+                              <Label htmlFor="f_date_verbal" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">
+                                Date (Verbal format)
+                              </Label>
                               <Input
-                                type="text"
-                                value={layoutConfig.dateVerbalText || ""}
-                                onChange={(e) => updateLayoutField("dateVerbalText", e.target.value)}
-                                className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-xs rounded-xl"
+                                id="f_date_verbal"
+                                value={layoutConfig.f_date_verbal || ""}
+                                onChange={(e) => updateLayoutField("f_date_verbal", e.target.value)}
+                                className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 text-xs rounded-lg h-9"
+                                placeholder="e.g. Twenty Seventh Day of July..."
                               />
                             </div>
 
-                            <div className="space-y-2">
-                              <div className="flex justify-between text-xs font-bold">
-                                <Label className="text-slate-700 dark:text-slate-350">Verbal Date Y-Coordinate</Label>
-                                <span className="text-blue-500">{layoutConfig.dateVerbalY} pt</span>
-                              </div>
-                              <input
-                                type="range"
-                                min="180"
-                                max="300"
-                                step="1"
-                                value={layoutConfig.dateVerbalY || 245}
-                                onChange={(e) => updateLayoutField("dateVerbalY", Number(e.target.value))}
-                                className="w-full h-1.5 bg-slate-200 dark:bg-slate-850 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                            <div className="space-y-1.5">
+                              <Label htmlFor="f_reg_title" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">
+                                Registrar Title
+                              </Label>
+                              <Input
+                                id="f_reg_title"
+                                value={layoutConfig.f_reg_title || ""}
+                                onChange={(e) => updateLayoutField("f_reg_title", e.target.value)}
+                                className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 text-xs rounded-lg h-9"
+                                placeholder="e.g. Registrar"
+                              />
+                            </div>
+
+                            <div className="space-y-1.5">
+                              <Label htmlFor="f_vc_title" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">
+                                Vice Chancellor Title
+                              </Label>
+                              <Input
+                                id="f_vc_title"
+                                value={layoutConfig.f_vc_title || ""}
+                                onChange={(e) => updateLayoutField("f_vc_title", e.target.value)}
+                                className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 text-xs rounded-lg h-9"
+                                placeholder="e.g. Acting Vice Chancellor"
                               />
                             </div>
                           </div>
                         )}
 
-                        {/* Back Controls */}
-                        {layoutSide === "back" && (
-                          <div className="space-y-5">
-                            <h3 className="text-xs font-black uppercase tracking-wider text-slate-400">Back Placements & Translations</h3>
-                            
+                        {certConfigTab === "back_si" && (
+                          <div className="space-y-4 bg-slate-50/50 dark:bg-slate-950/20 border border-slate-100 dark:border-slate-900 p-5 rounded-2xl">
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+                              <h3 className="text-xs font-bold text-slate-800 dark:text-slate-200">Back Side (Sinhala) Settings</h3>
+                            </div>
+
                             <div className="grid grid-cols-2 gap-4">
-                              <div className="space-y-2">
-                                <div className="flex justify-between text-xs font-bold">
-                                  <Label className="text-slate-700">Title Y-Pos</Label>
-                                  <span className="text-blue-500">{layoutConfig.titleY} pt</span>
-                                </div>
-                                <input
-                                  type="range"
-                                  min="450"
-                                  max="550"
-                                  step="1"
-                                  value={layoutConfig.titleY || 500}
-                                  onChange={(e) => updateLayoutField("titleY", Number(e.target.value))}
-                                  className="w-full h-1.5 bg-slate-200 dark:bg-slate-850 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                              <div className="space-y-1.5 col-span-2">
+                                <Label htmlFor="b_si_date" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">
+                                  Sinhala Date
+                                </Label>
+                                <Input
+                                  id="b_si_date"
+                                  value={layoutConfig.b_si_date || ""}
+                                  onChange={(e) => updateLayoutField("b_si_date", e.target.value)}
+                                  className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 text-xs rounded-lg h-9 font-sans"
+                                  placeholder="e.g. 2023 ජූලි මස 27 වන දින"
                                 />
                               </div>
-
-                              <div className="space-y-2">
-                                <div className="flex justify-between text-xs font-bold">
-                                  <Label className="text-slate-700">Preamble Y-Pos</Label>
-                                  <span className="text-blue-500">{layoutConfig.preambleY} pt</span>
-                                </div>
-                                <input
-                                  type="range"
-                                  min="400"
-                                  max="500"
-                                  step="1"
-                                  value={layoutConfig.preambleY || 482}
-                                  onChange={(e) => updateLayoutField("preambleY", Number(e.target.value))}
-                                  className="w-full h-1.5 bg-slate-200 dark:bg-slate-850 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                              <div className="space-y-1.5 col-span-2">
+                                <Label htmlFor="b_si_date2" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">
+                                  Sinhala Date Suffix
+                                </Label>
+                                <Input
+                                  id="b_si_date2"
+                                  value={layoutConfig.b_si_date2 || ""}
+                                  onChange={(e) => updateLayoutField("b_si_date2", e.target.value)}
+                                  className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 text-xs rounded-lg h-9 font-sans"
+                                  placeholder="e.g. දින සිට"
                                 />
                               </div>
                             </div>
 
-                            {/* Preambles */}
-                            <div className="space-y-3 p-3 bg-slate-50 dark:bg-slate-950/20 border border-slate-200 dark:border-slate-900 rounded-2xl">
-                              <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400">Sinhala Statutory Preamble</h4>
-                              <div className="space-y-2">
-                                <Label className="text-[10px] font-bold text-slate-500">Internal Candidate Preamble</Label>
-                                <textarea
-                                  rows={3}
-                                  value={layoutConfig.preambleSiInternal || ""}
-                                  onChange={(e) => updateLayoutField("preambleSiInternal", e.target.value)}
-                                  className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs rounded-xl p-2.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                />
-                              </div>
-                              <div className="space-y-2">
-                                <Label className="text-[10px] font-bold text-slate-500">External Candidate Preamble</Label>
-                                <textarea
-                                  rows={3}
-                                  value={layoutConfig.preambleSiExternal || ""}
-                                  onChange={(e) => updateLayoutField("preambleSiExternal", e.target.value)}
-                                  className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs rounded-xl p-2.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                />
-                              </div>
-                              <div className="space-y-2">
-                                <Label className="text-[10px] font-bold text-slate-500">Sinhala Suffix</Label>
+                            <div className="border-t border-slate-100 dark:border-slate-900 my-2 pt-2" />
+
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="space-y-1.5">
+                                <Label htmlFor="b_si_reg_name" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">
+                                  Registrar Name (Si)
+                                </Label>
                                 <Input
-                                  type="text"
-                                  value={layoutConfig.suffixSi || ""}
-                                  onChange={(e) => updateLayoutField("suffixSi", e.target.value)}
-                                  className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-xs rounded-xl"
+                                  id="b_si_reg_name"
+                                  value={layoutConfig.b_si_reg_name || ""}
+                                  onChange={(e) => updateLayoutField("b_si_reg_name", e.target.value)}
+                                  className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 text-xs rounded-lg h-9 font-sans"
+                                  placeholder="එස්.සී. හේරත්"
+                                />
+                              </div>
+                              <div className="space-y-1.5">
+                                <Label htmlFor="b_si_reg_title" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">
+                                  Registrar Title (Si)
+                                </Label>
+                                <Input
+                                  id="b_si_reg_title"
+                                  value={layoutConfig.b_si_reg_title || ""}
+                                  onChange={(e) => updateLayoutField("b_si_reg_title", e.target.value)}
+                                  className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 text-xs rounded-lg h-9 font-sans"
+                                  placeholder="ලේඛකාධිකාරි"
                                 />
                               </div>
                             </div>
 
-                            <div className="space-y-3 p-3 bg-slate-50 dark:bg-slate-950/20 border border-slate-200 dark:border-slate-900 rounded-2xl">
-                              <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400">Tamil Statutory Preamble</h4>
-                              <div className="space-y-2">
-                                <Label className="text-[10px] font-bold text-slate-500">Internal Candidate Preamble</Label>
-                                <textarea
-                                  rows={3}
-                                  value={layoutConfig.preambleTaInternal || ""}
-                                  onChange={(e) => updateLayoutField("preambleTaInternal", e.target.value)}
-                                  className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs rounded-xl p-2.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="space-y-1.5">
+                                <Label htmlFor="b_si_vc_name" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">
+                                  VC Name (Si)
+                                </Label>
+                                <Input
+                                  id="b_si_vc_name"
+                                  value={layoutConfig.b_si_vc_name || ""}
+                                  onChange={(e) => updateLayoutField("b_si_vc_name", e.target.value)}
+                                  className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 text-xs rounded-lg h-9 font-sans"
+                                  placeholder="වෛද්‍ය පී.එච්.ජේ. පුෂ්පකුමාර"
                                 />
                               </div>
-                              <div className="space-y-2">
-                                <Label className="text-[10px] font-bold text-slate-500">External Candidate Preamble</Label>
-                                <textarea
-                                  rows={3}
-                                  value={layoutConfig.preambleTaExternal || ""}
-                                  onChange={(e) => updateLayoutField("preambleTaExternal", e.target.value)}
-                                  className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs rounded-xl p-2.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              <div className="space-y-1.5">
+                                <Label htmlFor="b_si_vc_title" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">
+                                  VC Title (Si)
+                                </Label>
+                                <Input
+                                  id="b_si_vc_title"
+                                  value={layoutConfig.b_si_vc_title || ""}
+                                  onChange={(e) => updateLayoutField("b_si_vc_title", e.target.value)}
+                                  className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 text-xs rounded-lg h-9 font-sans"
+                                  placeholder="වැඩ බලන උපකුලපති"
                                 />
                               </div>
-                              <div className="space-y-2">
-                                <Label className="text-[10px] font-bold text-slate-500">Tamil Suffix</Label>
-                                <textarea
-                                  rows={2}
-                                  value={layoutConfig.suffixTa || ""}
-                                  onChange={(e) => updateLayoutField("suffixTa", e.target.value)}
-                                  className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs rounded-xl p-2.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            </div>
+                          </div>
+                        )}
+
+                        {certConfigTab === "back_ta" && (
+                          <div className="space-y-4 bg-slate-50/50 dark:bg-slate-950/20 border border-slate-100 dark:border-slate-900 p-5 rounded-2xl">
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
+                              <h3 className="text-xs font-bold text-slate-800 dark:text-slate-200">Back Side (Tamil) Settings</h3>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="space-y-1.5">
+                                <Label htmlFor="b_ta_date1" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">
+                                  Tamil Date Line 1
+                                </Label>
+                                <Input
+                                  id="b_ta_date1"
+                                  value={layoutConfig.b_ta_date1 || ""}
+                                  onChange={(e) => updateLayoutField("b_ta_date1", e.target.value)}
+                                  className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 text-xs rounded-lg h-9 font-sans"
+                                  placeholder="27 ஜூன் 2023"
+                                />
+                              </div>
+                              <div className="space-y-1.5">
+                                <Label htmlFor="b_ta_date2" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">
+                                  Tamil Date Line 2
+                                </Label>
+                                <Input
+                                  id="b_ta_date2"
+                                  value={layoutConfig.b_ta_date2 || ""}
+                                  onChange={(e) => updateLayoutField("b_ta_date2", e.target.value)}
+                                  className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 text-xs rounded-lg h-9 font-sans"
+                                  placeholder="27 ஜூலை 2023"
                                 />
                               </div>
                             </div>
 
-                            {/* Back Page Dates */}
-                            <div className="space-y-3 p-3 bg-slate-50 dark:bg-slate-950/20 border border-slate-200 dark:border-slate-900 rounded-2xl">
-                              <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400">Bilateral Dates</h4>
-                              <div className="grid grid-cols-2 gap-3">
-                                <div className="space-y-1">
-                                  <Label className="text-[9px] font-bold">Sinhala Date Line 1</Label>
-                                  <Input
-                                    type="text"
-                                    value={layoutConfig.dateSiLine1 || ""}
-                                    onChange={(e) => updateLayoutField("dateSiLine1", e.target.value)}
-                                    className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-[11px] h-8 rounded-lg"
-                                  />
-                                </div>
-                                <div className="space-y-1">
-                                  <Label className="text-[9px] font-bold">Sinhala Date Line 2</Label>
-                                  <Input
-                                    type="text"
-                                    value={layoutConfig.dateSiLine2 || ""}
-                                    onChange={(e) => updateLayoutField("dateSiLine2", e.target.value)}
-                                    className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-[11px] h-8 rounded-lg"
-                                  />
-                                </div>
+                            <div className="border-t border-slate-100 dark:border-slate-900 my-2 pt-2" />
+
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="space-y-1.5">
+                                <Label htmlFor="b_ta_reg_name" className="text-[10px] uppercase font-bold text-slate-555">
+                                  Registrar Name (Ta)
+                                </Label>
+                                <Input
+                                  id="b_ta_reg_name"
+                                  value={layoutConfig.b_ta_reg_name || ""}
+                                  onChange={(e) => updateLayoutField("b_ta_reg_name", e.target.value)}
+                                  className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 text-xs rounded-lg h-9 font-sans"
+                                  placeholder="எஸ்.சி.ஹேரத்"
+                                />
                               </div>
-                              <div className="grid grid-cols-2 gap-3 mt-2">
-                                <div className="space-y-1">
-                                  <Label className="text-[9px] font-bold">Tamil Date Line 1</Label>
-                                  <Input
-                                    type="text"
-                                    value={layoutConfig.dateTaLine1 || ""}
-                                    onChange={(e) => updateLayoutField("dateTaLine1", e.target.value)}
-                                    className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-[11px] h-8 rounded-lg"
-                                  />
-                                </div>
-                                <div className="space-y-1">
-                                  <Label className="text-[9px] font-bold">Tamil Date Line 2</Label>
-                                  <Input
-                                    type="text"
-                                    value={layoutConfig.dateTaLine2 || ""}
-                                    onChange={(e) => updateLayoutField("dateTaLine2", e.target.value)}
-                                    className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-[11px] h-8 rounded-lg"
-                                  />
-                                </div>
+                              <div className="space-y-1.5">
+                                <Label htmlFor="b_ta_reg_title" className="text-[10px] uppercase font-bold text-slate-555">
+                                  Registrar Title (Ta)
+                                </Label>
+                                <Input
+                                  id="b_ta_reg_title"
+                                  value={layoutConfig.b_ta_reg_title || ""}
+                                  onChange={(e) => updateLayoutField("b_ta_reg_title", e.target.value)}
+                                  className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 text-xs rounded-lg h-9 font-sans"
+                                  placeholder="பதிவாளர்"
+                                />
                               </div>
                             </div>
 
-                            {/* Signatures */}
-                            <div className="space-y-3 p-3 bg-slate-50 dark:bg-slate-950/20 border border-slate-200 dark:border-slate-900 rounded-2xl">
-                              <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400">Signatory Details</h4>
-                              
-                              <div className="space-y-2">
-                                <Label className="text-[10px] font-bold">Registrar Name</Label>
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="space-y-1.5">
+                                <Label htmlFor="b_ta_vc_name" className="text-[10px] uppercase font-bold text-slate-555">
+                                  VC Name (Ta)
+                                </Label>
                                 <Input
-                                  type="text"
-                                  value={layoutConfig.registrarName || ""}
-                                  onChange={(e) => updateLayoutField("registrarName", e.target.value)}
-                                  className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-xs rounded-xl"
+                                  id="b_ta_vc_name"
+                                  value={layoutConfig.b_ta_vc_name || ""}
+                                  onChange={(e) => updateLayoutField("b_ta_vc_name", e.target.value)}
+                                  className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 text-xs rounded-lg h-9 font-sans"
+                                  placeholder="வைத்தியர் பி.எச்.ஜி.ஜே. புஷ்பகுமார"
                                 />
                               </div>
-                              <div className="space-y-2">
-                                <Label className="text-[10px] font-bold">Registrar Title</Label>
+                              <div className="space-y-1.5">
+                                <Label htmlFor="b_ta_vc_title" className="text-[10px] uppercase font-bold text-slate-555">
+                                  VC Title (Ta)
+                                </Label>
                                 <Input
-                                  type="text"
-                                  value={layoutConfig.registrarTitle || ""}
-                                  onChange={(e) => updateLayoutField("registrarTitle", e.target.value)}
-                                  className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-xs rounded-xl"
+                                  id="b_ta_vc_title"
+                                  value={layoutConfig.b_ta_vc_title || ""}
+                                  onChange={(e) => updateLayoutField("b_ta_vc_title", e.target.value)}
+                                  className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 text-xs rounded-lg h-9 font-sans"
+                                  placeholder="பதில் உபவேந்தர்"
                                 />
-                              </div>
-
-                              <div className="space-y-2">
-                                <Label className="text-[10px] font-bold">Vice Chancellor Name</Label>
-                                <Input
-                                  type="text"
-                                  value={layoutConfig.vcName || ""}
-                                  onChange={(e) => updateLayoutField("vcName", e.target.value)}
-                                  className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-xs rounded-xl"
-                                />
-                              </div>
-                              <div className="space-y-2">
-                                <Label className="text-[10px] font-bold">Vice Chancellor Title</Label>
-                                <Input
-                                  type="text"
-                                  value={layoutConfig.vcTitle || ""}
-                                  onChange={(e) => updateLayoutField("vcTitle", e.target.value)}
-                                  className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-xs rounded-xl"
-                                />
-                              </div>
-
-                              <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-200 dark:border-slate-900">
-                                <div className="space-y-1">
-                                  <Label className="text-[9px] font-bold">Registrar X</Label>
-                                  <Input
-                                    type="number"
-                                    value={layoutConfig.registrarX || 99}
-                                    onChange={(e) => updateLayoutField("registrarX", Number(e.target.value))}
-                                    className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-xs h-8 rounded-lg"
-                                  />
-                                </div>
-                                <div className="space-y-1">
-                                  <Label className="text-[9px] font-bold">VC X</Label>
-                                  <Input
-                                    type="number"
-                                    value={layoutConfig.vcX || 496}
-                                    onChange={(e) => updateLayoutField("vcX", Number(e.target.value))}
-                                    className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-xs h-8 rounded-lg"
-                                  />
-                                </div>
-                                <div className="space-y-1">
-                                  <Label className="text-[9px] font-bold">Sign Y</Label>
-                                  <Input
-                                    type="number"
-                                    value={layoutConfig.signatureY || 118}
-                                    onChange={(e) => updateLayoutField("signatureY", Number(e.target.value))}
-                                    className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-xs h-8 rounded-lg"
-                                  />
-                                </div>
                               </div>
                             </div>
                           </div>
                         )}
                       </div>
 
-                      {/* Right Column: Visual Preview Canvas */}
-                      <div className="lg:col-span-7 flex flex-col items-center justify-start bg-slate-100/30 dark:bg-slate-950/20 border border-slate-250 dark:border-slate-900 rounded-3xl p-6 relative min-h-[660px]">
-                        <span className="absolute top-4 left-4 bg-slate-900/60 text-white dark:bg-white/10 dark:text-slate-350 text-[10px] font-black uppercase px-2.5 py-1 rounded-md tracking-wider">
-                          Interactive Live Canvas
-                        </span>
-
-                        {layoutSide === "front" ? (
-                          /* Front side live layout representation */
-                          <div 
-                            className="w-[420px] h-[594px] bg-[#fefdfa] dark:bg-[#FAF9F5] border-8 border-double border-[#8b7355] rounded-xl shadow-2xl relative select-none font-serif text-[#1e293b] overflow-hidden"
-                            style={{ backgroundImage: "radial-gradient(rgba(139,115,85,0.03) 1px, transparent 0)", backgroundSize: "8px 8px" }}
-                          >
-                            {/* Inner border line */}
-                            <div className="absolute inset-1 border border-[#8b7355]/20 pointer-events-none" />
-
-                            {/* Crest logo representation */}
-                            <div className="absolute top-[8%] left-1/2 -translate-x-1/2 w-14 h-14 bg-slate-100 dark:bg-slate-200/80 rounded-full border border-dashed border-[#8b7355]/40 flex items-center justify-center text-[10px] text-slate-400 font-bold">
-                              CREST
-                            </div>
-
-                            {/* University Title */}
-                            <div className="absolute top-[21%] left-0 w-full text-center text-[14px] font-bold uppercase tracking-widest text-[#8b7355]">
-                              Rajarata University of Sri Lanka
-                            </div>
-
-                            {/* Preamble description */}
-                            <div className="absolute top-[28%] left-10 right-10 text-center text-[8px] italic leading-normal text-slate-500 max-h-12 overflow-hidden">
-                              Having successfully completed the prescribed courses of study and the examinations of this university as an internal candidate...
-                            </div>
-
-                            {/* Bridge text */}
-                            <div className="absolute top-[37%] left-0 w-full text-center text-[8px] text-slate-400">
-                              was admitted to the degree of
-                            </div>
-
-                            {/* Student Name dynamic position */}
-                            <div 
-                              className="absolute left-10 right-10 text-center font-bold text-[#1e3a8a] truncate"
-                              style={{ 
-                                top: `${((841.89 - (layoutConfig.studentNameY || 490)) / 841.89) * 100}%`,
-                                fontSize: `${(layoutConfig.studentNameFontSize || 26) * 0.55}px`,
-                                lineHeight: "1.1"
-                              }}
-                            >
-                              KUMARA A.B.C.D.E.F.
-                            </div>
-
-                            {/* Degree Name dynamic position */}
-                            <div 
-                              className="absolute left-10 right-10 text-center font-bold text-[#8b7355]"
-                              style={{ 
-                                top: `${((841.89 - (layoutConfig.degreeNameY || 405)) / 841.89) * 100}%`,
-                                fontSize: `${(layoutConfig.degreeNameFontSize || 20) * 0.55}px`,
-                                lineHeight: "1.1"
-                              }}
-                            >
-                              BACHELOR OF SCIENCE IN INFORMATION TECHNOLOGY
-                            </div>
-
-                            {/* Static and details bridge */}
-                            <div 
-                              className="absolute left-0 w-full text-center text-[7px] text-slate-400 uppercase tracking-widest"
-                              style={{ top: `${((841.89 - 380) / 841.89) * 100}%` }}
-                            >
-                              and was conferred this degree at the convocation
-                            </div>
-
-                            {/* Dynamic Digital Date */}
-                            <div 
-                              className="absolute left-0 w-full text-center text-[9px] italic text-slate-600"
-                              style={{ top: `${((841.89 - (layoutConfig.dateDigitalY || 350)) / 841.89) * 100}%` }}
-                            >
-                              on {layoutConfig.dateDigitalText || "15th January 2023"}
-                            </div>
-
-                            {/* Dynamic Verbal Date */}
-                            <div 
-                              className="absolute left-10 right-10 text-center text-[8px] italic text-slate-500 leading-tight"
-                              style={{ top: `${((841.89 - (layoutConfig.dateVerbalY || 245)) / 841.89) * 100}%` }}
-                            >
-                              held on {layoutConfig.dateVerbalText || "Twenty Seventh Day of July in the Year Two Thousand Twenty Three"}
-                            </div>
-
-                            {/* Signatures representations */}
-                            <div 
-                              className="absolute w-full px-8 flex justify-between"
-                              style={{ top: `${((841.89 - 140) / 841.89) * 100}%` }}
-                            >
-                              <div className="text-center w-28 border-t border-slate-300 pt-1">
-                                <span className="text-[8px] block font-sans text-slate-400">Registrar Signature</span>
-                                <span className="text-[9px] font-sans font-bold text-slate-600 block mt-0.5">Registrar</span>
-                              </div>
-                              <div className="text-center w-28 border-t border-slate-300 pt-1">
-                                <span className="text-[8px] block font-sans text-slate-400">VC Signature</span>
-                                <span className="text-[9px] font-sans font-bold text-slate-600 block mt-0.5">Vice Chancellor</span>
-                              </div>
-                            </div>
-
-                            {/* Seal */}
-                            <div 
-                              className="absolute left-1/2 -translate-x-1/2 w-14 h-14 rounded-full border-2 border-red-500/25 flex items-center justify-center text-[8px] font-black tracking-widest text-red-500/30"
-                              style={{ top: `${((841.89 - 170) / 841.89) * 100}%` }}
-                            >
-                              SEAL
-                            </div>
+                      {/* Right Column: Mock Certificate PDF Generation Section (6 columns) */}
+                      <div className="lg:col-span-6 space-y-6">
+                        <div className="space-y-4 bg-slate-50/50 dark:bg-slate-950/20 border border-slate-100 dark:border-slate-900 p-5 rounded-2xl">
+                          <div className="flex items-center gap-2 mb-2">
+                            <GraduationCap className="h-5 w-5 text-blue-500" />
+                            <h3 className="text-xs font-bold text-slate-800 dark:text-slate-200">Mock Certificate Generator</h3>
                           </div>
-                        ) : (
-                          /* Back side live layout representation (bilateral translations) */
-                          <div 
-                            className="w-[420px] h-[594px] bg-[#fefdfa] dark:bg-[#FAF9F5] border-8 border-double border-[#8b7355] rounded-xl shadow-2xl relative select-none font-serif text-[#1e293b] overflow-hidden"
-                            style={{ backgroundImage: "radial-gradient(rgba(139,115,85,0.03) 1px, transparent 0)", backgroundSize: "8px 8px" }}
-                          >
-                            {/* Inner border */}
-                            <div className="absolute inset-1 border border-[#8b7355]/20 pointer-events-none" />
+                          <p className="text-[11px] text-slate-500 leading-relaxed">
+                            Review layout, spacing, and sizing rules (such as automatic text shrinkage for long student names and split lines for long degree names) by downloading a mock certificate with custom inputs.
+                          </p>
 
-                            {/* Certificate metadata */}
-                            <div className="absolute top-[4%] right-[8%] text-[7px] text-slate-400 text-right font-sans">
-                              Certificate # 001542
-                            </div>
-
-                            {/* Logo */}
-                            <div className="absolute top-[5%] left-1/2 -translate-x-1/2 w-9 h-9 bg-slate-100 rounded-full border border-slate-200 flex items-center justify-center text-[7px] text-slate-400 font-bold">
-                              Logo
-                            </div>
-                            <div className="absolute top-[12%] left-0 w-full text-center text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                              Rajarata University of Sri Lanka
-                            </div>
-
-                            {/* Mock Grading Scheme Table */}
-                            <div className="absolute top-[16%] left-6 right-6 border border-slate-200 bg-slate-50 text-[6px] font-sans p-1.5 rounded-lg">
-                              <div className="grid grid-cols-4 font-bold border-b border-slate-350 pb-1 mb-1 text-slate-500">
-                                <span>Grading</span>
-                                <span>Regulation</span>
-                                <span>Relevance</span>
-                                <span>Status</span>
-                              </div>
-                              <div className="grid grid-cols-4 text-slate-400 space-y-0.5">
-                                <span>First Class</span>
-                                <span>GPA &gt;= 3.70</span>
-                                <span>Excellent</span>
-                                <span>Awarded</span>
-                              </div>
-                            </div>
-
-                            {/* Bilateral columns titles */}
-                            <div 
-                              className="absolute w-full px-6 grid grid-cols-2 gap-4"
-                              style={{ top: `${((841.89 - (layoutConfig.titleY || 500)) / 841.89) * 100}%` }}
-                            >
-                              <div className="text-center font-bold text-[9px] text-[#1e293b] truncate">
-                                {layoutConfig.titleSi || "\u0dc1\u0dca\u200d\u0dbb\u0dd3 \u0dbd\u0d82\u0d9a\u0dcf \u0dbb\u0da2\u0dbb\u0dcf\u0da2 \u0dc0\u0dd2\u0dc1\u0dca\u0dc0\u0dc0\u0dd2\u0daf\u0dca\u200d\u0dba\u0dcf\u0dbd\u0dba"}
-                              </div>
-                              <div className="text-center font-bold text-[9.5px] text-[#1e293b] truncate">
-                                {layoutConfig.titleTa || "\u0b87\u0bb2\u0b99\u0bcd\u0b95\u0bc8 \u0bb0\u0b9c\u0bb0\u0bbe\u0b9c \u0baa\u0bb2\u0bcd\u0b95\u0bb2\u0bc8\u0b95\u0bcd\u0b95\u0bb4\u0b95\u0bae\u0bcd"}
-                              </div>
-                            </div>
-
-                            {/* Bilateral statutory preambles */}
-                            <div 
-                              className="absolute w-full px-6 grid grid-cols-2 gap-4 text-slate-600 leading-normal"
-                              style={{ top: `${((841.89 - (layoutConfig.preambleY || 482)) / 841.89) * 100}%` }}
-                            >
-                              {/* Sinhala side */}
-                              <div className="text-[6.5px] whitespace-pre-line tracking-tight">
-                                {layoutConfig.preambleSiInternal || ""}
-                                <div className="font-bold text-[#8b7355] text-[7.5px] py-1">
-                                  තොරතුරු තාක්ෂණවේදීවේදී උපාධිය
-                                </div>
-                                <div className="mb-2">
-                                  {layoutConfig.suffixSi || ""}
-                                </div>
-                                <div className="text-[6px] text-slate-400 leading-tight">
-                                  {layoutConfig.dateSiLine1} <br />
-                                  {layoutConfig.dateSiLine2}
-                                </div>
-                              </div>
-
-                              {/* Tamil side */}
-                              <div className="text-[6.5px] whitespace-pre-line tracking-tight">
-                                {layoutConfig.preambleTaInternal || ""}
-                                <div className="font-bold text-[#8b7355] text-[7px] py-1">
-                                  தகவல் தொழில்நுட்பமானி பட்டத்தை
-                                </div>
-                                <div className="mb-2">
-                                  {layoutConfig.suffixTa || ""}
-                                </div>
-                                <div className="text-[6px] text-slate-400 leading-tight">
-                                  {layoutConfig.dateTaLine1} <br />
-                                  {layoutConfig.dateTaLine2}
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Registrar Signature representation */}
-                            <div 
-                              className="absolute text-center"
-                              style={{ 
-                                left: `${((layoutConfig.registrarX || 99) / 595.275) * 100}%`,
-                                top: `${((841.89 - (layoutConfig.signatureY || 118)) / 841.89) * 100}%`,
-                                width: "120px",
-                                transform: "translateX(-50%)"
-                              }}
-                            >
-                              <div className="w-16 h-4 border-b border-dashed border-slate-300 mx-auto" />
-                              <span className="text-[6.5px] block font-sans text-slate-650 mt-1 leading-tight">{layoutConfig.registrarName}</span>
-                              <span className="text-[6.5px] block font-sans text-slate-450 leading-none">{layoutConfig.registrarTitle}</span>
-                            </div>
-
-                            {/* Vice Chancellor Signature representation */}
-                            <div 
-                              className="absolute text-center"
-                              style={{ 
-                                left: `${((layoutConfig.vcX || 496) / 595.275) * 100}%`,
-                                top: `${((841.89 - (layoutConfig.signatureY || 118)) / 841.89) * 100}%`,
-                                width: "120px",
-                                transform: "translateX(-50%)"
-                              }}
-                            >
-                              <div className="w-16 h-4 border-b border-dashed border-slate-300 mx-auto" />
-                              <span className="text-[6px] block font-sans text-slate-650 mt-1 leading-tight">{layoutConfig.vcName}</span>
-                              <span className="text-[6.5px] block font-sans text-slate-450 leading-none">{layoutConfig.vcTitle}</span>
-                            </div>
+                          <div className="space-y-1.5">
+                            <Label htmlFor="mock_student_name" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">
+                              Mock Student Name
+                            </Label>
+                            <Input
+                              id="mock_student_name"
+                              value={mockStudentName}
+                              onChange={(e) => setMockStudentName(e.target.value)}
+                              className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 text-xs rounded-lg h-9"
+                              placeholder="e.g. KUMARA A.B.C.D.E.F."
+                            />
                           </div>
-                        )}
+
+                          <div className="space-y-1.5">
+                            <Label htmlFor="mock_degree_select" className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">
+                              Select Mock Degree
+                            </Label>
+                            <select
+                              id="mock_degree_select"
+                              value={selectedMockDegreeCode}
+                              onChange={(e) => setSelectedMockDegreeCode(e.target.value)}
+                              className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs text-slate-850 dark:text-slate-300 px-3 py-2 rounded-lg focus:outline-none h-9 font-medium"
+                            >
+                              {degrees.length === 0 ? (
+                                <option value="">No degrees available in system</option>
+                              ) : (
+                                degrees.map((d) => (
+                                  <option key={d.code} value={d.code}>
+                                    {`[${d.code}] ${d.name_en} (${d.type})`}
+                                  </option>
+                                ))
+                              )}
+                            </select>
+                          </div>
+
+                          <div className="pt-2">
+                            <Button
+                              onClick={handleDownloadMockCertificate}
+                              disabled={mockPreviewDownloading || !layoutConfig}
+                              className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold h-10 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-md shadow-blue-500/10 transition-all duration-200"
+                            >
+                              {mockPreviewDownloading ? (
+                                <>
+                                  <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
+                                  Generating Mock PDF...
+                                </>
+                              ) : (
+                                <>
+                                  <Download className="h-4 w-4" />
+                                  Download Mock Certificate PDF
+                                </>
+                              )}
+                            </Button>
+                          </div>
+                        </div>
+                      
                       </div>
                     </div>
                   )}
@@ -7473,7 +7096,7 @@ const generateVerificationLetterPDF = async (
           {verLetterStudent && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={() => setVerLetterStudent(null)}>
               <div
-                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl w-full max-w-2xl max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
                 onClick={(e) => e.stopPropagation()}
               >
                 {/* Modal Header */}
@@ -7490,170 +7113,207 @@ const generateVerificationLetterPDF = async (
                   </button>
                 </div>
 
-                {/* Step: Form */}
-                {verLetterStep === "form" && (
-                  <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-1">
-                        <Label className="text-[10px] uppercase font-bold text-slate-500">Your Number</Label>
-                        <Input
-                          value={verLetterInputs.yourNumber}
-                          onChange={(e) => setVerLetterInputs((p) => ({ ...p, yourNumber: e.target.value }))}
-                          placeholder="e.g. AR/123/2024"
-                          className="h-8 text-xs rounded-lg bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-[10px] uppercase font-bold text-slate-500">Our Ref</Label>
-                        <Input
-                          value={verLetterInputs.ourRef}
-                          onChange={(e) => setVerLetterInputs((p) => ({ ...p, ourRef: e.target.value }))}
-                          placeholder="e.g. REG/VER/2024"
-                          className="h-8 text-xs rounded-lg bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-[10px] uppercase font-bold text-slate-500">My Number</Label>
-                        <Input
-                          value={verLetterInputs.myNumber}
-                          onChange={(e) => setVerLetterInputs((p) => ({ ...p, myNumber: e.target.value }))}
-                          placeholder="Your reference number"
-                          className="h-8 text-xs rounded-lg bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-[10px] uppercase font-bold text-slate-500">File Number</Label>
-                        <Input
-                          value={verLetterInputs.fileNumber}
-                          onChange={(e) => setVerLetterInputs((p) => ({ ...p, fileNumber: e.target.value }))}
-                          placeholder="e.g. FILE/2024/001"
-                          className="h-8 text-xs rounded-lg bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900"
-                        />
-                      </div>
-                    </div>
-
+                {/* Modal Content - Single Column Scrollable */}
+                <div className="flex-1 overflow-y-auto p-6 space-y-4 animate-in fade-in duration-300">
+                  <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1">
-                      <Label className="text-[10px] uppercase font-bold text-slate-500">Date of Requestee's Letter</Label>
+                      <Label className="text-[10px] uppercase font-bold text-slate-500">Your Number</Label>
                       <Input
-                        value={verLetterInputs.refLetterDate}
-                        onChange={(e) => setVerLetterInputs((p) => ({ ...p, refLetterDate: e.target.value }))}
-                        placeholder="e.g. 10th January 2024"
+                        value={verLetterInputs.yourNumber}
+                        onChange={(e) => setVerLetterInputs((p) => ({ ...p, yourNumber: e.target.value }))}
+                        placeholder="e.g. AR/123/2024"
                         className="h-8 text-xs rounded-lg bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900"
                       />
                     </div>
-
                     <div className="space-y-1">
-                      <Label className="text-[10px] uppercase font-bold text-slate-500">Address of requestee</Label>
-                      <textarea
-                        value={verLetterInputs.addressee}
-                        onChange={(e) => setVerLetterInputs((p) => ({ ...p, addressee: e.target.value }))}
-                        placeholder={"The Secretary\nMinistry of Education\nColombo 07"}
-                        rows={4}
-                        className="w-full text-xs rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-blue-500 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600"
-                      />
-                    </div>
-
-                    <div className="space-y-1">
-                      <Label className="text-[10px] uppercase font-bold text-slate-500">Staff Member Name (Deputy Registrar)</Label>
+                      <Label className="text-[10px] uppercase font-bold text-slate-500">Our Ref</Label>
                       <Input
-                        value={verLetterInputs.staffName}
-                        onChange={(e) => setVerLetterInputs((p) => ({ ...p, staffName: e.target.value }))}
-                        placeholder="e.g. W.M.P. Wickramasinghe"
+                        value={verLetterInputs.ourRef}
+                        onChange={(e) => setVerLetterInputs((p) => ({ ...p, ourRef: e.target.value }))}
+                        placeholder="e.g. REG/VER/2024"
                         className="h-8 text-xs rounded-lg bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900"
                       />
                     </div>
-
-                    {/* Student Data Preview */}
-                    <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 p-4 space-y-2">
-                      <p className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Student Data (auto-filled)</p>
-                      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                        {[
-                          ["Name in Full", verLetterStudent.name_with_initials],
-                          ["Degree", verLetterStudent.degree_name_en],
-                          ["Reg. No.", verLetterStudent.registration_no],
-                          ["Index No.", verLetterStudent.index_no],
-                          ["Certificate No.", verLetterStudent.certificate_number],
-                          ["GPA & Class", `${verLetterStudent.gpa ? Number(verLetterStudent.gpa).toFixed(2) : "-"} — ${verLetterStudent.class || "-"}`],
-                        ].map(([label, val]) => (
-                          <div key={label as string} className="flex gap-1">
-                            <span className="font-bold text-slate-600 dark:text-slate-400 shrink-0">{label}:</span>
-                            <span className="text-slate-800 dark:text-slate-200 break-all">{(val as string) || "-"}</span>
-                          </div>
-                        ))}
-                      </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px] uppercase font-bold text-slate-500">My Number</Label>
+                      <Input
+                        value={verLetterInputs.myNumber}
+                        onChange={(e) => setVerLetterInputs((p) => ({ ...p, myNumber: e.target.value }))}
+                        placeholder="Your reference number"
+                        className="h-8 text-xs rounded-lg bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900"
+                      />
                     </div>
-
-                    <div className="flex justify-end gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
-                      <Button
-                        variant="outline"
-                        onClick={() => setVerLetterStudent(null)}
-                        className="text-xs h-9 px-4 rounded-xl border-slate-200 dark:border-slate-800"
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        onClick={async () => {
-                          setVerLetterGenerating(true);
-                          try {
-                            const blob = await generateVerificationLetterPDF(verLetterStudent, verLetterInputs);
-                            setVerLetterPdfBlob(blob);
-                            setVerLetterStep("preview");
-                          } catch (err) {
-                            console.error("Letter generation failed:", err);
-                            setErrorMsg("Failed to generate verification letter.");
-                          } finally {
-                            setVerLetterGenerating(false);
-                          }
-                        }}
-                        disabled={verLetterGenerating}
-                        className="bg-violet-600 hover:bg-violet-700 text-white font-bold text-xs h-9 px-5 rounded-xl flex items-center gap-2 shadow shadow-violet-500/20"
-                      >
-                        {verLetterGenerating ? (
-                          <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Generating...</>
-                        ) : (
-                          <><FileText className="h-3.5 w-3.5" /> Generate Letter</>
-                        )}
-                      </Button>
+                    <div className="space-y-1">
+                      <Label className="text-[10px] uppercase font-bold text-slate-500">File Number</Label>
+                      <Input
+                        value={verLetterInputs.fileNumber}
+                        onChange={(e) => setVerLetterInputs((p) => ({ ...p, fileNumber: e.target.value }))}
+                        placeholder="e.g. FILE/2024/001"
+                        className="h-8 text-xs rounded-lg bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900"
+                      />
                     </div>
                   </div>
-                )}
 
-                {/* Step: Preview */}
-                {verLetterStep === "preview" && verLetterPdfBlob && (
-                  <div className="flex-1 flex flex-col overflow-hidden">
-                    <div className="flex-1 min-h-[500px]">
+                  <div className="space-y-1">
+                    <Label className="text-[10px] uppercase font-bold text-slate-500">Date of Requestee's Letter</Label>
+                    <Input
+                      value={verLetterInputs.refLetterDate}
+                      onChange={(e) => setVerLetterInputs((p) => ({ ...p, refLetterDate: e.target.value }))}
+                      placeholder="e.g. 10th January 2024"
+                      className="h-8 text-xs rounded-lg bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label className="text-[10px] uppercase font-bold text-slate-500">Address of requestee</Label>
+                    <textarea
+                      value={verLetterInputs.addressee}
+                      onChange={(e) => setVerLetterInputs((p) => ({ ...p, addressee: e.target.value }))}
+                      placeholder={"The Secretary\nMinistry of Education\nColombo 07"}
+                      rows={3}
+                      className="w-full text-xs rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-blue-500 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-600"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label className="text-[10px] uppercase font-bold text-slate-500">Staff Member Name (Deputy Registrar)</Label>
+                    <Input
+                      value={verLetterInputs.staffName}
+                      onChange={(e) => setVerLetterInputs((p) => ({ ...p, staffName: e.target.value }))}
+                      placeholder="e.g. W.M.P. Wickramasinghe"
+                      className="h-8 text-xs rounded-lg bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900"
+                    />
+                  </div>
+
+                  {/* Student Data Preview */}
+                  <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 p-3 space-y-1.5 shrink-0">
+                    <p className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Student Data (auto-filled)</p>
+                    <div className="grid grid-cols-1 gap-y-0.5 text-xs">
+                      {[
+                        ["Name in Full", verLetterStudent.name_with_initials],
+                        ["Degree", verLetterStudent.degree_name_en],
+                        ["Reg. No.", verLetterStudent.registration_no],
+                        ["Index No.", verLetterStudent.index_no],
+                        ["Certificate No.", verLetterStudent.certificate_number],
+                        ["GPA & Class", `${verLetterStudent.gpa ? Number(verLetterStudent.gpa).toFixed(2) : "-"} — ${verLetterStudent.class || "-"}`],
+                      ].map(([label, val]) => (
+                        <div key={label as string} className="flex gap-1">
+                          <span className="font-bold text-slate-600 dark:text-slate-400 shrink-0 w-24">{label}:</span>
+                          <span className="text-slate-800 dark:text-slate-200 break-all">{(val as string) || "-"}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Footer Buttons */}
+                <div className="px-6 py-4 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-2 shrink-0 bg-slate-50 dark:bg-slate-900/50">
+                  <Button
+                    variant="outline"
+                    onClick={() => setVerLetterStudent(null)}
+                    disabled={verLetterGenerating}
+                    className="h-9 rounded-xl text-xs font-bold px-4 border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={handlePreviewVerificationLetter}
+                    disabled={verLetterGenerating}
+                    className="bg-violet-600 hover:bg-violet-700 text-white font-bold text-xs h-9 px-5 rounded-xl flex items-center gap-1.5 shadow shadow-violet-500/20 disabled:opacity-70"
+                  >
+                    {verLetterGenerating ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        Generating Preview...
+                      </>
+                    ) : (
+                      <>
+                        <Eye className="h-3.5 w-3.5" />
+                        Preview Letter
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── VERIFICATION LETTER PREVIEW MODAL ── */}
+          {showVerLetterPreviewModal && verLetterStudent && (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-xs p-4" onClick={() => setShowVerLetterPreviewModal(false)}>
+              <div
+                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl w-full max-w-4xl h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* Preview Header */}
+                <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
+                  <div>
+                    <h2 className="text-base font-bold text-slate-900 dark:text-white">Letter Preview</h2>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Verify layout and text formatting for {verLetterStudent.registration_no || verLetterStudent.index_no}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setShowVerLetterPreviewModal(false)}
+                    className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+
+                {/* Preview Body */}
+                <div className="flex-1 bg-slate-100 dark:bg-slate-950 relative flex flex-col">
+                  {verLetterPreviewUrl ? (
+                    <object
+                      data={verLetterPreviewUrl}
+                      type="application/pdf"
+                      className="w-full h-full border-none flex-1"
+                    >
                       <iframe
-                        src={URL.createObjectURL(verLetterPdfBlob)}
-                        className="w-full h-full min-h-[500px]"
+                        src={verLetterPreviewUrl}
+                        className="w-full h-full border-none"
                         title="Verification Letter Preview"
                       />
+                    </object>
+                  ) : (
+                    <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
+                      <Loader2 className="h-8 w-8 animate-spin text-violet-600 mb-2" />
+                      <p className="text-xs text-slate-400 dark:text-slate-600">Loading document preview...</p>
                     </div>
-                    <div className="px-6 py-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3 shrink-0">
-                      <Button
-                        variant="outline"
-                        onClick={() => setVerLetterStep("form")}
-                        className="text-xs h-9 px-4 rounded-xl border-slate-200 dark:border-slate-800"
-                      >
-                        ← Back to Edit
-                      </Button>
-                      <Button
-                        onClick={() => {
-                          if (!verLetterPdfBlob) return;
-                          const url = URL.createObjectURL(verLetterPdfBlob);
-                          const a = document.createElement("a");
-                          a.href = url;
-                          a.download = `Verification_Letter_${verLetterStudent.registration_no || verLetterStudent.index_no}.pdf`;
-                          a.click();
-                          URL.revokeObjectURL(url);
-                        }}
-                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-9 px-5 rounded-xl flex items-center gap-2 shadow shadow-emerald-500/20"
-                      >
-                        <Download className="h-3.5 w-3.5" />
-                        Download PDF
-                      </Button>
-                    </div>
-                  </div>
-                )}
+                  )}
+                </div>
+
+                {/* Preview Footer */}
+                <div className="px-6 py-4 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-2 shrink-0 bg-slate-50 dark:bg-slate-900/50">
+                  <Button
+                    variant="outline"
+                    onClick={() => setShowVerLetterPreviewModal(false)}
+                    className="h-9 rounded-xl text-xs font-bold px-4 border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800"
+                  >
+                    Close Preview
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      if (!verLetterPdfBlob) return;
+                      const reader = new FileReader();
+                      reader.onloadend = () => {
+                        const dataUrl = reader.result as string;
+                        const a = document.createElement("a");
+                        a.href = dataUrl;
+                        a.download = `Verification_Letter_${verLetterStudent.registration_no || verLetterStudent.index_no}.pdf`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                      };
+                      reader.readAsDataURL(verLetterPdfBlob);
+                    }}
+                    disabled={!verLetterPreviewUrl}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-9 px-5 rounded-xl flex items-center gap-1.5 shadow shadow-emerald-500/20 disabled:opacity-50"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Download PDF
+                  </Button>
+                </div>
               </div>
             </div>
           )}

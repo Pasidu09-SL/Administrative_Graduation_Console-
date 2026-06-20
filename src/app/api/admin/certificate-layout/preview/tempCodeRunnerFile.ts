@@ -1,0 +1,1 @@
+await page.screenshot({ path: 'puppeteer_debug.png', fullPage: true });

@@ -33,6 +33,24 @@ export interface CertificateLayoutData {
   registrarX: number;
   vcX: number;
   signatureY: number;
+
+  // Manual Staff Entry Fields (redesigned Certificate Layout tab)
+  f_date_digital: string;
+  f_date_verbal: string;
+  f_reg_title: string;
+  f_vc_title: string;
+  b_si_date: string;
+  b_si_date2: string;
+  b_si_reg_name: string;
+  b_si_reg_title: string;
+  b_si_vc_name: string;
+  b_si_vc_title: string;
+  b_ta_date1: string;
+  b_ta_date2: string;
+  b_ta_reg_name: string;
+  b_ta_reg_title: string;
+  b_ta_vc_name: string;
+  b_ta_vc_title: string;
 }
 
 export const DEFAULT_LAYOUT: CertificateLayoutData = {
@@ -59,11 +77,29 @@ export const DEFAULT_LAYOUT: CertificateLayoutData = {
   dateTaLine2: 'பட்டமளிப்பு விழா: 27 ஜூலை 2023',
   registrarName: 'එස්.සී. හේරත් / எஸ்.சி.ஹேரத்',
   registrarTitle: 'ලේඛකාධිකාරි / பதிவாளர்',
-  vcName: 'වෛද්‍ය පී.එච්.ජේ. පුෂ්පකුමාර / வைத்தியர் பி.எச்.ஜி.ஜே. புஷ்பகுமார',
+  vcName: 'වෛද්‍ය පී.එච්.ජේ. පුෂ්පකුමාර / வைத்தியர் பி.எச்.ஜி.ජே. புஷ்பகுமார',
   vcTitle: 'වැඩ බලන උපකුලපති / பதில் உபவேந்தர்',
   registrarX: 99.213,
   vcX: 496.063,
   signatureY: 118,
+
+  // Manual Staff Entry Fields Defaults
+  f_date_digital: '15th January 2023',
+  f_date_verbal: 'Twenty Seventh Day of July in the Year Two Thousand Twenty Three',
+  f_reg_title: 'Registrar',
+  f_vc_title: 'Acting Vice Chancellor',
+  b_si_date: '2023 ජූලි මස 27 වන දින',
+  b_si_date2: 'දින සිට',
+  b_si_reg_name: 'එස්.සී. හේරත්',
+  b_si_reg_title: 'ලේඛකාධිකාරි',
+  b_si_vc_name: 'වෛද්‍ය පී.එච්.ජේ. පුෂ්පකුමාර',
+  b_si_vc_title: 'වැඩ බලන උපකුලපති',
+  b_ta_date1: '27 ஜூன் 2023',
+  b_ta_date2: '27 ஜூலை 2023',
+  b_ta_reg_name: 'எஸ்.சி.ஹேரத்',
+  b_ta_reg_title: 'பதிவாளர்',
+  b_ta_vc_name: 'வைத்தியர் பி.எச்.ஜி.ஜே. புஷ்பகுமார',
+  b_ta_vc_title: 'பதில் உபவேந்தர்',
 };
 
 export async function GET(req: Request) {
@@ -118,6 +154,9 @@ export async function POST(req: Request) {
       } else {
         filteredLayout[key] = (DEFAULT_LAYOUT as any)[key];
       }
+    }
+    if (layout_data.certLines !== undefined) {
+      filteredLayout.certLines = layout_data.certLines;
     }
 
     await runAsAdmin(async (client) => {

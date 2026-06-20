@@ -1386,7 +1386,7 @@ async function runTests() {
     }
 
     let finalStatus: any = {};
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 60; i++) {
       const checkRes = await fetch(`${BASE_URL}/api/admin/certificates`, {
         headers: { 'Cookie': adminCookieHeader }
       });

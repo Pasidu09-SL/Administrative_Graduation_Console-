@@ -1,9 +1,12 @@
-const { parentPort, workerData } = require('worker_threads');
-const puppeteer = require('puppeteer');
-const fs = require('fs');
-const path = require('path');
+export const dynamic = 'force-dynamic';
+import { NextResponse } from 'next/server';
+import puppeteer from 'puppeteer';
+import path from 'path';
+import fs from 'fs';
+import { getAdminSession } from '@/lib/auth';
+import { runAsAdmin } from '@/lib/db';
 
-const DEFAULT_CERT_LINES = {
+const DEFAULT_CERT_LINES: any = {
   internalFront: [
     { id: "f-univ", text: "RAJARATA UNIVERSITY OF SRI LANKA", fontSize: 20, fontFamily: "Times New Roman", bold: true, alignment: "center" },
     { id: "f-preamble", text: "Having successfully completed the prescribed\ncourses of study and the examinations\nof this university as an internal candidate", fontSize: 11, fontFamily: "Lucida Calligraphy", italic: true, alignment: "center" },
@@ -69,8 +72,7 @@ const DEFAULT_CERT_LINES = {
   ]
 };
 
-const DEFAULT_Y_MAP = {
-  // Front page
+const DEFAULT_Y_MAP: any = {
   "f-univ": 610,
   "f-preamble": 570,
   "f-student-name": 505,
@@ -100,7 +102,7 @@ const DEFAULT_Y_MAP = {
   "b-si-reg-name": 440,
   "b-si-reg-title": 425,
   "b-si-vc-name": 440,
-  "b-si-vc-title": 425 ,
+  "b-si-vc-title": 425,
   "b-ta-univ": 338,
   "b-ta-preamble": 315,
   "b-ta-date1": 290,
@@ -115,7 +117,7 @@ const DEFAULT_Y_MAP = {
   "b-ta-vc-title": 45
 };
 
-function getStudentCertLines(layoutData, isInternal, side) {
+function getStudentCertLines(layoutData: any, isInternal: boolean, side: 'front' | 'back') {
   const key = isInternal 
     ? (side === 'front' ? 'internalFront' : 'internalBack')
     : (side === 'front' ? 'externalFront' : 'externalBack');
@@ -123,7 +125,7 @@ function getStudentCertLines(layoutData, isInternal, side) {
   const defaults = DEFAULT_CERT_LINES[key];
   
   // Apply manual overrides from flat properties in layoutData if present
-  const baseLines = defaults.map(line => {
+  const baseLines = defaults.map((line: any) => {
     const dbKey = line.id.replace(/-/g, '_');
     if (layoutData && layoutData[dbKey] !== undefined && layoutData[dbKey] !== null) {
       return { ...line, text: layoutData[dbKey] };
@@ -134,8 +136,8 @@ function getStudentCertLines(layoutData, isInternal, side) {
   const saved = (layoutData && layoutData.certLines) ? layoutData.certLines[key] : null;
   if (!saved) return baseLines;
   
-  return baseLines.map(def => {
-    const found = saved.find(s => s.id === def.id);
+  return baseLines.map((def: any) => {
+    const found = saved.find((s: any) => s.id === def.id);
     if (found) {
       const dbKey = def.id.replace(/-/g, '_');
       const textOverride = (layoutData && layoutData[dbKey] !== undefined && layoutData[dbKey] !== null)
@@ -147,7 +149,7 @@ function getStudentCertLines(layoutData, isInternal, side) {
   });
 }
 
-function renderHtmlLines(lines, student, layoutData, side) {
+function renderHtmlLines(lines: any[], student: any, layoutData: any, side: 'front' | 'back') {
   let html = '';
   const SCALE = 1.24;
   
@@ -196,7 +198,7 @@ function renderHtmlLines(lines, student, layoutData, side) {
     const size = fontSize * SCALE;
     
     if (line.id === "b-barcode") {
-      const certNo = student.certificate_number || '000000';
+      const certNo = student.certificate_number || '001542';
       const barcodeWidth = (certNo.length * 11 + 37) * 0.9;
       const barcodeXStart = 555.275 - barcodeWidth - 10;
       
@@ -253,6 +255,7 @@ function renderHtmlLines(lines, student, layoutData, side) {
       
       html += `
         <div class="line${extraClass}" style="
+          position: absolute;
           left: ${columnCenterX}pt;
           top: ${top}pt;
           width: ${maxW}pt;
@@ -261,6 +264,9 @@ function renderHtmlLines(lines, student, layoutData, side) {
           font-weight: ${fontWeight};
           font-style: ${fontStyle};
           color: #1a1a1a;
+          transform: translate(-50%, -0.85em);
+          text-align: ${alignment};
+          line-height: 1.25;
         ">${formattedText}</div>
       `;
     }
@@ -268,16 +274,55 @@ function renderHtmlLines(lines, student, layoutData, side) {
   return html;
 }
 
-async function generate() {
+export async function POST(req: Request) {
   try {
-    const { students, outputPath, templateDir, layoutData = {} } = workerData;
+    const session = await getAdminSession();
+    if (!session) {
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    }
 
-    // Load TrueType Fonts for Sinhala and Tamil rendering
-    const fontSiBytes = fs.readFileSync(path.join(templateDir, 'AbhayaLibre-Regular.ttf'));
-    const fontTaBytes = fs.readFileSync(path.join(templateDir, 'Pavanam-Regular.ttf'));
+    const body = await req.json().catch(() => ({}));
+    const { layoutConfig, studentName, degreeCode } = body;
 
-    const fontSiBase64 = fontSiBytes.toString('base64');
-    const fontTaBase64 = fontTaBytes.toString('base64');
+    let degreeDetails: any = null;
+    if (degreeCode) {
+      degreeDetails = await runAsAdmin(async (client) => {
+        const res = await client.query(
+          'SELECT code, name_en, name_si, name_ta, type FROM degrees WHERE code = $1',
+          [degreeCode]
+        );
+        return res.rows[0] || null;
+      });
+    }
+
+    const mockStudent = {
+      id: 'mock-1',
+      full_name: studentName ? studentName.toUpperCase() : 'KUMARA A.B.C.D.E.F.',
+      name_with_initials: studentName ? studentName.toUpperCase() : 'KUMARA A.B.C.D.E.F.',
+      registration_no: 'REG/2026/1001',
+      index_no: 'INDEX-260001',
+      certificate_number: '001542',
+      degree_name_en: degreeDetails ? degreeDetails.name_en.toUpperCase() : 'BACHELOR OF SCIENCE IN INFORMATION TECHNOLOGY',
+      degree_name_si: degreeDetails ? degreeDetails.name_si : 'තොරතුරු තාක්ෂණවේදීවේදී උපාධිය',
+      degree_name_ta: degreeDetails ? degreeDetails.name_ta : 'தகவல் தொழில்நுட்பமானி பட்டத்தை',
+      degree_type: degreeDetails ? degreeDetails.type : 'Internal',
+    };
+
+    const templateDir = path.join(process.cwd(), 'public', 'templates');
+    
+    // Load Abhaya Libre & Pavanam font files as base64
+    const fontSiPath = path.join(templateDir, 'AbhayaLibre-Regular.ttf');
+    const fontTaPath = path.join(templateDir, 'Pavanam-Regular.ttf');
+    
+    let fontSiBase64 = '';
+    let fontTaBase64 = '';
+    
+    if (fs.existsSync(fontSiPath)) {
+      fontSiBase64 = fs.readFileSync(fontSiPath).toString('base64');
+    }
+    if (fs.existsSync(fontTaPath)) {
+      fontTaBase64 = fs.readFileSync(fontTaPath).toString('base64');
+    }
 
     // Build the master HTML content for all pages
     let htmlContent = `
@@ -347,12 +392,6 @@ body {
   border: 0.5pt solid #262626;
   box-sizing: border-box;
 }
-.line {
-  position: absolute;
-  transform: translate(-50%, -0.85em);
-  text-align: center;
-  line-height: 1.25;
-}
 .sig-line {
   position: absolute;
   height: 0.75pt;
@@ -365,33 +404,23 @@ body {
 <body>
 `;
 
-    let processedCount = 0;
+    const isInternal = mockStudent.degree_type === 'Internal';
 
-    for (const student of students) {
-      const isInternal = student.degree_type === 'Internal';
+    // 1. Render front page
+    const frontLines = getStudentCertLines(layoutConfig, isInternal, 'front');
+    htmlContent += `<div class="page">`;
+    htmlContent += `  <div class="outer-border"></div>`;
+    htmlContent += `  <div class="inner-border"></div>`;
+    htmlContent += renderHtmlLines(frontLines, mockStudent, layoutConfig, 'front');
+    htmlContent += `</div>`;
 
-      // 1. Render front page
-      const frontLines = getStudentCertLines(layoutData, isInternal, 'front');
-      htmlContent += `<div class="page">`;
-      htmlContent += `  <div class="outer-border"></div>`;
-      htmlContent += `  <div class="inner-border"></div>`;
-      htmlContent += renderHtmlLines(frontLines, student, layoutData, 'front');
-      htmlContent += `</div>`;
-
-      // 2. Render back page
-      const backLines = getStudentCertLines(layoutData, isInternal, 'back');
-      htmlContent += `<div class="page">`;
-      htmlContent += `  <div class="outer-border"></div>`;
-      htmlContent += `  <div class="inner-border"></div>`;
-      htmlContent += renderHtmlLines(backLines, student, layoutData, 'back');
-      htmlContent += `</div>`;
-
-      processedCount++;
-      // Post progress updates during parsing
-      if (parentPort) {
-        parentPort.postMessage({ type: 'progress', current: Math.round(processedCount * 0.5), total: students.length });
-      }
-    }
+    // 2. Render back page
+    const backLines = getStudentCertLines(layoutConfig, isInternal, 'back');
+    htmlContent += `<div class="page">`;
+    htmlContent += `  <div class="outer-border"></div>`;
+    htmlContent += `  <div class="inner-border"></div>`;
+    htmlContent += renderHtmlLines(backLines, mockStudent, layoutConfig, 'back');
+    htmlContent += `</div>`;
 
     // Add barcode drawing script
     htmlContent += `
@@ -550,18 +579,20 @@ document.querySelectorAll('.cert-degree-name').forEach(el => {
 </script>
 </body>
 </html>
+
 `;
 
-    // Launch headless Chromium via Puppeteer to generate final PDF
+
+    // Launch headless Chromium via Puppeteer to generate preview PDF
     const browser = await puppeteer.launch({
       headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox']
     });
 
     const page = await browser.newPage();
-    await page.setContent(htmlContent, { waitUntil: 'networkidle0' });
+    await page.setContent(htmlContent, { waitUntil: 'networkidle0' as any });
+    
 
-    // Print to PDF
     const pdfBuffer = await page.pdf({
       width: '8.2677in',
       height: '11.6929in',
@@ -575,19 +606,18 @@ document.querySelectorAll('.cert-degree-name').forEach(el => {
     });
 
     await browser.close();
+  
 
-    // Save final PDF
-    fs.writeFileSync(outputPath, pdfBuffer);
 
-    if (parentPort) {
-      parentPort.postMessage({ type: 'progress', current: students.length, total: students.length });
-      parentPort.postMessage({ type: 'done', outputPath, count: students.length });
-    }
-  } catch (err) {
-    if (parentPort) {
-      parentPort.postMessage({ type: 'error', error: err.stack || err.message });
-    }
+    return new Response(new Uint8Array(pdfBuffer), {
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Length': String(pdfBuffer.length),
+        'Content-Disposition': 'inline; filename="Certificate_Layout_Preview.pdf"',
+      },
+    });
+  } catch (err: any) {
+    return NextResponse.json({ success: false, error: err.stack || err.message }, { status: 500 });
   }
-}
 
-generate();
+}

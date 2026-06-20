@@ -162,6 +162,21 @@ export async function runMigrations() {
           created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
       `);
+
+      // Self-healing patch: Drop NOT NULL constraint on allocation_group if it exists
+      await client.query(`
+        DO $$ 
+        BEGIN 
+            IF EXISTS (
+                SELECT 1 
+                FROM information_schema.columns 
+                WHERE table_name='convocation_sessions' AND column_name='allocation_group'
+            ) THEN 
+                ALTER TABLE convocation_sessions ALTER COLUMN allocation_group DROP NOT NULL;
+            END IF; 
+        END $$;
+      `);
+
       await client.query(`
         INSERT INTO convocation_sessions (session_number, session_name) VALUES
           (1, 'Session 1'),
