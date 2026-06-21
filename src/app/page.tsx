@@ -21,11 +21,20 @@ export default function EntryPage() {
   const [info, setInfo] = useState<string | null>(null);
   const [isPortalClosed, setIsPortalClosed] = useState(false);
 
+  const [checking, setChecking] = useState(true);
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const tokenParam = params.get('token');
     const errorParam = params.get('error');
     
+    if (!tokenParam && !errorParam) {
+      router.replace('/admin');
+      return;
+    }
+
+    setChecking(false);
+
     if (tokenParam) {
       setToken(tokenParam);
       try {
@@ -95,6 +104,17 @@ export default function EntryPage() {
       setLoading(false);
     }
   };
+
+  if (checking) {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center font-sans">
+        <Loader2 className="h-8 w-8 text-blue-600 animate-spin" />
+        <span className="text-xs font-bold text-slate-500 mt-2 animate-pulse">
+          Redirecting to login portal...
+        </span>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-50 flex flex-col relative overflow-hidden transition-colors duration-200 font-sans">
