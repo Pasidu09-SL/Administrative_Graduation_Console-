@@ -21,7 +21,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const { origin } = new URL(req.url);
+    const origin = process.env.APP_URL || new URL(req.url).origin;
     const results = await runAsAdmin(async (client) => {
       // 1. Fetch the custom email template from DB
       const tempRes = await client.query(

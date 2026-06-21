@@ -161,7 +161,7 @@ export async function POST(req: Request) {
         actionText = `Rejected changes & unlocked profile. Reason: "${reason}".`;
 
         // Dispatch correction alert email via Brevo
-        const { origin } = new URL(req.url);
+        const origin = process.env.APP_URL || new URL(req.url).origin;
         const token = signMagicToken(student.email, student.registration_no, student.convocation_year);
         const correctionUrl = `${origin}/?email=${encodeURIComponent(student.email)}&token=${token}`;
         try {

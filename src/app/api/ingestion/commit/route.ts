@@ -24,7 +24,7 @@ export async function POST(req: Request) {
       return { degrees: degRes.rows, sessions: sessRes.rows };
     });
 
-    const { origin } = new URL(req.url);
+    const origin = process.env.APP_URL || new URL(req.url).origin;
     const notifications: any[] = [];
 
     await runAsAdmin(async (client) => {
