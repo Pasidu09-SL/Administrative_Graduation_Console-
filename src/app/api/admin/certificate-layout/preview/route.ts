@@ -585,6 +585,7 @@ document.querySelectorAll('.cert-degree-name').forEach(el => {
 
     // Launch headless Chromium via Puppeteer to generate preview PDF
     const browser = await puppeteer.launch({
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
       headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox']
     });

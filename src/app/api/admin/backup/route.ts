@@ -1,42 +1,78 @@
-import { NextResponse } from 'next/server';
-import { runAsAdmin } from '@/lib/db';
-import { getAdminSession } from '@/lib/auth';
+import { NextResponse } from "next/server";
+import { runAsAdmin } from "@/lib/db";
+import { getAdminSession } from "@/lib/auth";
+import {
+  generateLogicalDump,
+  getSupabaseServiceClient,
+  downloadBucketContents,
+} from "@/lib/backup-restore";
+import AdmZip from "adm-zip";
 
 export async function GET() {
   try {
+    // 1. Verify administrator authentication
     const session = await getAdminSession();
-    if (!session || session.role !== 'Administrator') {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    if (!session || session.role !== "Administrator") {
+      return NextResponse.json(
+        { success: false, error: "Unauthorized" },
+        { status: 401 },
+      );
     }
 
-    const backupData = await runAsAdmin(async (client) => {
-      const degreesRes = await client.query('SELECT * FROM degrees');
-      const studentsRes = await client.query('SELECT * FROM students');
-      const staffRes = await client.query('SELECT * FROM staff');
-      const auditLogsRes = await client.query('SELECT * FROM audit_logs');
-      const timelineRes = await client.query('SELECT * FROM registration_windows');
-
-      return {
-        timestamp: new Date().toISOString(),
-        version: '1.0',
-        degrees: degreesRes.rows,
-        students: studentsRes.rows,
-        staff: staffRes.rows,
-        audit_logs: auditLogsRes.rows,
-        registration_windows: timelineRes.rows,
-      };
+    // 2. Perform Database Logical Dump (only public schema)
+    const sqlDump = await runAsAdmin(async (client) => {
+      return await generateLogicalDump(client);
     });
 
-    const filename = `rusl_backup_${new Date().toISOString().slice(0, 10).replace(/-/g, '_')}.json`;
+    // 3. Download physical assets from Supabase storage buckets
+    let studentPhotos: { name: string; buffer: Buffer }[] = [];
+    let paymentSlips: { name: string; buffer: Buffer }[] = [];
 
-    return new NextResponse(JSON.stringify(backupData, null, 2), {
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (serviceRoleKey) {
+      try {
+        const supabase = getSupabaseServiceClient();
+        studentPhotos = await downloadBucketContents(supabase, "student-photos");
+        paymentSlips = await downloadBucketContents(supabase, "payment-slips");
+      } catch (storageErr: any) {
+        console.error("Storage download failed, proceeding with empty directories in backup. Log:", storageErr.message);
+      }
+    } else {
+      console.warn("SUPABASE_SERVICE_ROLE_KEY not configured. Skipping storage media download.");
+    }
+
+    // 4. Bundle components into ZIP archive
+    const zip = new AdmZip();
+    zip.addFile("public_schema.sql", Buffer.from(sqlDump, "utf8"));
+
+    // Add media folders
+    for (const photo of studentPhotos) {
+      zip.addFile(`student-photos/${photo.name}`, photo.buffer);
+    }
+    for (const slip of paymentSlips) {
+      zip.addFile(`payment-slips/${slip.name}`, slip.buffer);
+    }
+
+    const zipBuffer = zip.toBuffer();
+
+    // 5. Generate filename and trigger download
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const timestamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    const filename = `RUSL_Graduation_Backup_${timestamp}.zip`;
+
+    return new NextResponse(zipBuffer, {
       status: 200,
       headers: {
-        'Content-Type': 'application/json',
-        'Content-Disposition': `attachment; filename="${filename}"`,
+        "Content-Type": "application/zip",
+        "Content-Disposition": `attachment; filename="${filename}"`,
       },
     });
   } catch (err: any) {
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    console.error("Backup operation failed explicitly:", err);
+    return NextResponse.json(
+      { success: false, error: err.message || "Failed to generate backup." },
+      { status: 500 },
+    );
   }
 }

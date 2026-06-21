@@ -6,6 +6,9 @@ const nextConfig: NextConfig = {
     'chastity-frostlike-unstitch.ngrok-free.dev',
     '*.ngrok-free.dev'
   ],
+  experimental: {
+    cpus: 2,
+  },
 };
 
 export default nextConfig;

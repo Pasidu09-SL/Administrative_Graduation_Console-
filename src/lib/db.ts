@@ -35,7 +35,7 @@ export const pool = new Pool({
 });
 
 // Auto-run migrations on startup to apply schema patches/migrations dynamically
-if (process.env.IS_TEST_RUNNER !== "true") {
+if (process.env.IS_TEST_RUNNER !== "true" && process.env.NEXT_PHASE !== "phase-production-build") {
   runMigrations()
     .then(() => {
       console.log(

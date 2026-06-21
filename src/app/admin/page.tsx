@@ -42,6 +42,8 @@ import {
   Edit,
   Mail,
   Eye,
+  Info,
+  AlertTriangle,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { useRouter } from "next/navigation";
@@ -260,6 +262,14 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Database backup and restoration states
+  const [restoreFile, setRestoreFile] = useState<File | null>(null);
+  const [restoreLoading, setRestoreLoading] = useState<boolean>(false);
+  const [restoreProgressStep, setRestoreProgressStep] = useState<number>(0);
+  const [showConfirmModal, setShowConfirmModal] = useState<boolean>(false);
+  const [confirmText, setConfirmText] = useState<string>("");
+  const [isDragOver, setIsDragOver] = useState<boolean>(false);
 
   // 1. COURSE MANAGER STATE
   const [degrees, setDegrees] = useState<any[]>([]);
@@ -2083,6 +2093,82 @@ const generateVerificationLetterPDF = async (
       triggerAlert(false, err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDownloadBackup = async () => {
+    setLoading(true);
+    setSuccessMsg(null);
+    setErrorMsg(null);
+    try {
+      const res = await fetch("/api/admin/backup");
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || "Failed to generate backup.");
+      }
+      const blob = await res.blob();
+      const disposition = res.headers.get("content-disposition");
+      let filename = "RUSL_Graduation_Backup.zip";
+      if (disposition && disposition.includes("filename=")) {
+        const match = disposition.match(/filename="(.+)"/);
+        if (match && match[1]) filename = match[1];
+      }
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      triggerAlert(true, "System backup generated and download initiated.");
+    } catch (err: any) {
+      triggerAlert(false, err.message || "Backup generation failed.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleExecuteRestore = async () => {
+    if (!restoreFile) return;
+
+    setShowConfirmModal(false);
+    setConfirmText("");
+    setRestoreLoading(true);
+    setRestoreProgressStep(1); // Step 1: Rebuilding Database Tables
+
+    const stepTimer = setTimeout(() => {
+      setRestoreProgressStep(2); // Step 2: Synchronizing Media Storage Buckets
+    }, 3500);
+
+    try {
+      const res = await fetch("/api/admin/restore", {
+        method: "POST",
+        body: restoreFile,
+        headers: {
+          "Content-Type": "application/zip",
+        },
+      });
+
+      clearTimeout(stepTimer);
+
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to restore system.");
+      }
+
+      triggerAlert(true, "System successfully restored to backup state.");
+      setRestoreFile(null);
+
+      setTimeout(() => {
+        window.location.reload();
+      }, 1500);
+    } catch (err: any) {
+      clearTimeout(stepTimer);
+      triggerAlert(false, err.message || "Restoration failed.");
+    } finally {
+      setRestoreLoading(false);
+      setRestoreProgressStep(0);
     }
   };
 
@@ -6367,31 +6453,155 @@ const generateVerificationLetterPDF = async (
           {/* DATABASE MANAGEMENT WORKSPACE */}
           {activeTab === "db_maintenance" &&
             staffUser?.role === "Administrator" && (
-              <div className="max-w-xl">
-                <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-2xl shadow-sm">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 max-w-5xl">
+                {/* System Backup Card */}
+                <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-2xl shadow-sm self-start">
                   <CardHeader>
-                    <CardTitle className="text-base font-bold text-slate-950 dark:text-white flex items-center gap-1.5">
-                      <Download className="h-5 w-5 text-blue-600 dark:text-blue-500" />
-                      Database Maintenance
+                    <CardTitle className="text-base font-bold text-slate-955 dark:text-white flex items-center gap-1.5">
+                      <Download className="h-5 w-5 text-blue-650 dark:text-blue-500" />
+                      System Backup
                     </CardTitle>
-                    <CardDescription className="text-[11px] text-slate-555">
-                      Export a full system state JSON snapshot.
+                    <CardDescription className="text-[11px] text-slate-500">
+                      Generate and download a complete system snapshot.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <p className="text-xs text-slate-500 leading-relaxed">
-                      Download a complete backup of the degrees registry,
-                      student entries, staff accounts, timeline settings, and
-                      the immutable audit trail log history.
+                      Compiles all relational tables (degrees, students, staff, timeline windows, email templates, layout configurations, and activity logs) into a plain-text SQL schema and data dump. Simultaneously bundles all physical student photos and payment slip media assets from cloud storage into a unified archive.
                     </p>
-                    <a
-                      href="/api/admin/backup"
-                      download
-                      className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold h-9 rounded-lg text-xs flex items-center justify-center gap-2 transition shadow shadow-blue-500/20"
+
+                    <div className="flex items-start gap-2 text-xs text-slate-500 bg-slate-50/50 dark:bg-slate-950/20 p-3.5 rounded-xl border border-slate-100 dark:border-slate-900 leading-normal">
+                      <Info className="h-4.5 w-4.5 text-blue-500 shrink-0 mt-0.5" />
+                      <span>
+                        <strong>Backup contains:</strong> Complete PostgreSQL structure and alphanumeric row inserts, alongside physical folders for storage buckets.
+                      </span>
+                    </div>
+
+                    <Button
+                      onClick={handleDownloadBackup}
+                      disabled={loading || restoreLoading}
+                      className="w-full bg-blue-600 hover:bg-blue-750 text-white font-bold h-9 rounded-lg text-xs flex items-center justify-center gap-2 transition shadow shadow-blue-500/20"
                     >
-                      <Download className="h-4 w-4" />
-                      Export Database Backup
-                    </a>
+                      {loading ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Generating Backup...
+                        </>
+                      ) : (
+                        <>
+                          <Download className="h-4 w-4" />
+                          Generate & Download System Backup
+                        </>
+                      )}
+                    </Button>
+                  </CardContent>
+                </Card>
+
+                {/* System Restoration Card */}
+                <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-2xl shadow-sm self-start">
+                  <CardHeader>
+                    <CardTitle className="text-base font-bold text-slate-955 dark:text-white flex items-center gap-1.5">
+                      <Upload className="h-5 w-5 text-red-650 dark:text-red-500" />
+                      System Restoration
+                    </CardTitle>
+                    <CardDescription className="text-[11px] text-slate-500">
+                      Restore system state and physical assets from a ZIP archive.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex items-start gap-2.5 p-3.5 bg-amber-500/10 border border-amber-500/25 text-amber-700 dark:text-amber-400 rounded-xl text-xs font-semibold leading-relaxed">
+                      <AlertTriangle className="h-4.5 w-4.5 text-amber-500 shrink-0 mt-0.5" />
+                      <span>
+                        <strong>Notice:</strong> Please modify the registration window settings to <strong>"Closed"</strong> before initiating a recovery, preventing transaction conflicts from active students.
+                      </span>
+                    </div>
+
+                    {/* Drag-and-Drop file uploader */}
+                    <div
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        setIsDragOver(true);
+                      }}
+                      onDragLeave={() => setIsDragOver(false)}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        setIsDragOver(false);
+                        if (restoreLoading) return;
+                        const files = e.dataTransfer.files;
+                        if (files && files[0]) {
+                          const file = files[0];
+                          if (file.name.toLowerCase().endsWith(".zip")) {
+                            setRestoreFile(file);
+                          } else {
+                            triggerAlert(false, "Restoration strictly accepts only .zip archive file extensions.");
+                          }
+                        }
+                      }}
+                      className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all duration-200 ${
+                        isDragOver
+                          ? "border-blue-500 bg-blue-50/20 dark:bg-blue-950/10 scale-[0.99]"
+                          : "border-slate-200 dark:border-slate-800 hover:border-blue-500/50 hover:bg-slate-50/50 dark:hover:bg-slate-955/10"
+                      } ${restoreLoading ? "opacity-50 pointer-events-none" : ""}`}
+                    >
+                      <input
+                        type="file"
+                        id="restoreFileInput"
+                        accept=".zip"
+                        className="hidden"
+                        disabled={restoreLoading}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            if (file.name.toLowerCase().endsWith(".zip")) {
+                              setRestoreFile(file);
+                            } else {
+                              triggerAlert(false, "Restoration strictly accepts only .zip archive file extensions.");
+                            }
+                          }
+                        }}
+                      />
+                      <label htmlFor="restoreFileInput" className="cursor-pointer space-y-2 block">
+                        <div className="mx-auto w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-950 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-blue-500 dark:hover:text-blue-400 transition-colors">
+                          <Upload className="h-5 w-5" />
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-xs font-bold text-slate-700 dark:text-slate-350">
+                            {restoreFile ? restoreFile.name : "Drag & drop backup .zip archive"}
+                          </p>
+                          <p className="text-[10px] text-slate-400 dark:text-slate-550">
+                            {restoreFile
+                              ? `Size: ${(restoreFile.size / (1024 * 1024)).toFixed(2)} MB`
+                              : "or click to browse local folders"}
+                          </p>
+                        </div>
+                      </label>
+                    </div>
+
+                    {/* Progress feedback */}
+                    {restoreLoading && (
+                      <div className="space-y-2 p-3.5 bg-blue-500/5 border border-blue-500/10 rounded-xl">
+                        <div className="flex items-center gap-2">
+                          <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+                          <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                            Restoration in progress...
+                          </span>
+                        </div>
+                        <p className="text-xs text-blue-600 dark:text-blue-400 font-bold pl-6 animate-pulse">
+                          {restoreProgressStep === 1
+                            ? "Step 1/2: Rebuilding Database Tables..."
+                            : "Step 2/2: Synchronizing Media Storage Buckets..."}
+                        </p>
+                      </div>
+                    )}
+
+                    <Button
+                      onClick={() => setShowConfirmModal(true)}
+                      disabled={!restoreFile || restoreLoading}
+                      className="w-full bg-red-650 hover:bg-red-750 text-white font-bold h-9 rounded-lg text-xs flex items-center justify-center gap-2 transition shadow shadow-red-500/15"
+                    >
+                      <Upload className="h-4 w-4" />
+                      Execute Full System Restore
+                    </Button>
                   </CardContent>
                 </Card>
               </div>
@@ -7651,6 +7861,73 @@ const generateVerificationLetterPDF = async (
                   </Button>
                 </div>
               </form>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Destructive System Restore Confirmation Modal */}
+      {showConfirmModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+          <Card className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 w-full max-w-md shadow-2xl relative">
+            <button
+              onClick={() => {
+                setShowConfirmModal(false);
+                setConfirmText("");
+              }}
+              className="absolute top-4 right-4 p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 hover:text-slate-900 dark:hover:text-slate-200 transition-colors"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            <CardHeader className="p-0 pb-4">
+              <div className="flex items-center gap-2 mb-1">
+                <div className="p-1.5 bg-red-500/10 text-red-655 dark:text-red-405 rounded-lg">
+                  <ShieldAlert className="h-5 w-5" />
+                </div>
+                <CardTitle className="text-base font-extrabold text-red-655 dark:text-red-500">
+                  Destructive System Restore
+                </CardTitle>
+              </div>
+              <CardDescription className="text-xs text-slate-500 dark:text-slate-400 leading-normal">
+                This operation will permanently drop current tables and overwrite all existing data and media assets. This action cannot be undone.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-0 space-y-4">
+              <div className="space-y-1.5">
+                <Label
+                  htmlFor="confirmRestoreInput"
+                  className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400"
+                >
+                  Type 'RESTORE' to confirm
+                </Label>
+                <Input
+                  id="confirmRestoreInput"
+                  type="text"
+                  value={confirmText}
+                  onChange={(e) => setConfirmText(e.target.value)}
+                  placeholder="Type RESTORE"
+                  className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-650 rounded-xl text-xs h-9 font-bold"
+                />
+              </div>
+              <div className="flex gap-3 justify-end pt-2">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setShowConfirmModal(false);
+                    setConfirmText("");
+                  }}
+                  className="text-xs font-semibold h-9 rounded-xl px-4 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-950 text-slate-700 dark:text-slate-200"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleExecuteRestore}
+                  disabled={confirmText !== "RESTORE" || restoreLoading}
+                  className="bg-red-600 hover:bg-red-750 text-white font-bold h-9 rounded-xl text-xs px-4 shadow shadow-red-500/15"
+                >
+                  Yes, Restore System
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </div>
