@@ -24,7 +24,9 @@ export async function POST(req: Request) {
       return { degrees: degRes.rows, sessions: sessRes.rows };
     });
 
-    const origin = process.env.APP_URL || new URL(req.url).origin;
+    const host = req.headers.get('x-forwarded-host') || req.headers.get('host') || 'graduation-portal.duzb.me';
+    const proto = req.headers.get('x-forwarded-proto') || 'https';
+    const origin = process.env.APP_URL || `${proto}://${host}`;
     const notifications: any[] = [];
 
     await runAsAdmin(async (client) => {
