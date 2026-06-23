@@ -17,6 +17,11 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
+    const session = await getAdminSession();
+    if (!session) {
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    }
+
     const body = await req.json();
 
     // Auto-calculate degree_no if not provided
@@ -55,6 +60,8 @@ export async function POST(req: Request) {
 
     const { code, faculty, degree_no, name_en, name_si, name_ta, type } = parsed.data;
 
+    const { logAuditAction } = await import('@/lib/db');
+
     const data = await runAsAdmin(async (client) => {
       const res = await client.query(
         `INSERT INTO degrees (code, faculty, degree_no, name_en, name_si, name_ta, type)
@@ -62,7 +69,14 @@ export async function POST(req: Request) {
          RETURNING *`,
         [code, faculty, degree_no, name_en, name_si, name_ta, type]
       );
-      return res.rows[0];
+      
+      const newDeg = res.rows[0];
+      await client.query(
+        'INSERT INTO audit_logs (admin_id, action_taken) VALUES ($1, $2)',
+        [session.username, `Course added: ${newDeg.code} - ${newDeg.name_en}`]
+      );
+      
+      return newDeg;
     });
 
     return NextResponse.json({ success: true, data });
@@ -82,6 +96,11 @@ export async function POST(req: Request) {
 
 export async function PATCH(req: Request) {
   try {
+    const session = await getAdminSession();
+    if (!session) {
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    }
+
     const body = await req.json();
     const { id, name_en, name_si, name_ta, type } = body;
 
@@ -115,7 +134,15 @@ export async function PATCH(req: Request) {
          RETURNING *`,
         [name_en, name_si, name_ta, type, id]
       );
-      return res.rows[0];
+      
+      const updated = res.rows[0];
+      if (updated) {
+        await client.query(
+          'INSERT INTO audit_logs (admin_id, action_taken) VALUES ($1, $2)',
+          [session.username, `Course edited: ${updated.code} - ${updated.name_en}`]
+        );
+      }
+      return updated;
     });
 
     if (!data) {
@@ -143,12 +170,12 @@ export async function DELETE(req: Request) {
     }
 
     await runAsAdmin(async (client) => {
-      // 1. Fetch the degree being deleted to know its faculty and degree_no
-      const degreeRes = await client.query('SELECT faculty, degree_no FROM degrees WHERE id = $1', [id]);
+      // 1. Fetch the degree being deleted to know its faculty, degree_no, code and name_en
+      const degreeRes = await client.query('SELECT code, name_en, faculty, degree_no FROM degrees WHERE id = $1', [id]);
       if (degreeRes.rows.length === 0) {
         throw new Error('Degree not found.');
       }
-      const { faculty, degree_no } = degreeRes.rows[0];
+      const { code, name_en, faculty, degree_no } = degreeRes.rows[0];
 
       // 2. Delete the degree (will fail with foreign key constraint error if student exists)
       await client.query('DELETE FROM degrees WHERE id = $1', [id]);
@@ -168,6 +195,12 @@ export async function DELETE(req: Request) {
                    END
         WHERE faculty = $1 AND degree_no > $2
       `, [faculty, degree_no]);
+
+      // Log deletion
+      await client.query(
+        'INSERT INTO audit_logs (admin_id, action_taken) VALUES ($1, $2)',
+        [session.username, `Course deleted: ${code} - ${name_en}`]
+      );
     });
 
     return NextResponse.json({ success: true, message: 'Degree deleted successfully.' });

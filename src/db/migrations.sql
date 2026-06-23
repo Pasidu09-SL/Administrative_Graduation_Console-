@@ -90,6 +90,7 @@ CREATE TABLE students (
   confirmation_email_sent BOOLEAN DEFAULT FALSE,
   import_order SERIAL,
   timeline_bypass BOOLEAN DEFAULT FALSE,
+  is_late_addition BOOLEAN DEFAULT FALSE,
   effective_date DATE,
   graduation_date DATE,
   

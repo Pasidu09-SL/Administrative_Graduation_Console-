@@ -120,6 +120,13 @@ export async function POST(req: Request) {
         const activeYear = activeYearRes.rows[0]?.convocation_year || "2026";
         await client.query(syncGraduationDatesQuery, [activeYear]);
 
+        // Audit Log
+        await client.query(
+          `INSERT INTO audit_logs (admin_id, action_taken)
+           VALUES ($1, $2)`,
+          [session.username, `Allocated group '${groupName}' to Session ${sessNum}`]
+        );
+
         return res.rows[0];
       });
 
@@ -145,6 +152,13 @@ export async function POST(req: Request) {
         );
         const activeYear = activeYearRes.rows[0]?.convocation_year || "2026";
         await client.query(syncGraduationDatesQuery, [activeYear]);
+
+        // Audit Log
+        await client.query(
+          `INSERT INTO audit_logs (admin_id, action_taken)
+           VALUES ($1, $2)`,
+          [session.username, `Cleared session allocation for group '${groupName}'`]
+        );
       });
 
       return NextResponse.json({ success: true, message: `Cleared session allocation for ${groupName}.` });
@@ -166,6 +180,13 @@ export async function POST(req: Request) {
           "UPDATE students SET graduation_date = NULL WHERE convocation_year = $1",
           [activeYear]
         );
+
+        // Audit Log
+        await client.query(
+          `INSERT INTO audit_logs (admin_id, action_taken)
+           VALUES ($1, $2)`,
+          [session.username, `Cleared all group session allocations`]
+        );
       });
 
       return NextResponse.json({ success: true, message: 'All session allocations cleared.' });
@@ -181,6 +202,12 @@ export async function POST(req: Request) {
     const name = sessionName?.trim() || `Session ${num}`;
 
     const data = await runAsAdmin(async (client) => {
+      // Check if student records exist to enforce lock
+      const studentsCheck = await client.query('SELECT 1 FROM students LIMIT 1');
+      if (studentsCheck.rows.length > 0) {
+        throw new Error('Modifications are locked because student records exist in the database.');
+      }
+
       // Check if session number already exists
       const checkRes = await client.query('SELECT 1 FROM convocation_sessions WHERE session_number = $1', [num]);
       if (checkRes.rows.length > 0) {
@@ -191,7 +218,101 @@ export async function POST(req: Request) {
         'INSERT INTO convocation_sessions (session_number, session_name) VALUES ($1, $2) RETURNING *',
         [num, name]
       );
-      return res.rows[0];
+      
+      const newSess = res.rows[0];
+      // Audit log
+      await client.query(
+        `INSERT INTO audit_logs (admin_id, action_taken)
+         VALUES ($1, $2)`,
+        [session.username, `Added new convocation session: number=${num}, name='${name}'`]
+      );
+      return newSess;
+    });
+
+    return NextResponse.json({ success: true, data });
+  } catch (err: any) {
+    return NextResponse.json({ success: false, error: err.message }, { status: 400 });
+  }
+}
+
+// PATCH: Edit/rename convocation session details (supporting rename)
+export async function PATCH(req: Request) {
+  try {
+    const session = await getAdminSession();
+    if (!session || session.role !== 'Administrator') {
+      return NextResponse.json({ success: false, error: 'Unauthorized. Administrator role required.' }, { status: 401 });
+    }
+
+    const { id, sessionNumber, sessionName, sessionDate, sessionTime } = await req.json();
+
+    if (!id) {
+      return NextResponse.json({ success: false, error: 'Session ID is required.' }, { status: 400 });
+    }
+
+    const data = await runAsAdmin(async (client) => {
+      // Check if student records exist to enforce lock
+      const studentsCheck = await client.query('SELECT 1 FROM students LIMIT 1');
+      if (studentsCheck.rows.length > 0) {
+        throw new Error('Modifications are locked because student records exist in the database.');
+      }
+
+      // Check if session exists
+      const sessCheck = await client.query('SELECT * FROM convocation_sessions WHERE id = $1', [id]);
+      if (sessCheck.rows.length === 0) {
+        throw new Error('Session not found.');
+      }
+      const original = sessCheck.rows[0];
+
+      let updateQuery = `
+        UPDATE convocation_sessions
+        SET session_name = COALESCE($1, session_name),
+            session_date = COALESCE($2, session_date),
+            session_time = COALESCE($3, session_time)
+      `;
+      const params: any[] = [
+        sessionName !== undefined ? sessionName.trim() : null, 
+        sessionDate !== undefined ? sessionDate : null, 
+        sessionTime !== undefined ? sessionTime : null
+      ];
+
+      if (sessionNumber !== undefined) {
+        const num = parseInt(sessionNumber);
+        if (isNaN(num) || num <= 0) {
+          throw new Error('Invalid session number. Must be a positive integer.');
+        }
+        // Check duplicate session number
+        const duplicateCheck = await client.query(
+          'SELECT 1 FROM convocation_sessions WHERE session_number = $1 AND id <> $2',
+          [num, id]
+        );
+        if (duplicateCheck.rows.length > 0) {
+          throw new Error(`Session number ${num} already exists.`);
+        }
+        updateQuery += `, session_number = $4`;
+        params.push(num);
+      }
+
+      updateQuery += ` WHERE id = $${params.length + 1} RETURNING *`;
+      params.push(id);
+
+      const res = await client.query(updateQuery, params);
+      const updatedSess = res.rows[0];
+
+      // Sync graduation dates if date changed
+      const activeYearRes = await client.query(
+        "SELECT convocation_year FROM registration_windows WHERE is_active = TRUE LIMIT 1"
+      );
+      const activeYear = activeYearRes.rows[0]?.convocation_year || "2026";
+      await client.query(syncGraduationDatesQuery, [activeYear]);
+
+      // Audit Log
+      await client.query(
+        `INSERT INTO audit_logs (admin_id, action_taken)
+         VALUES ($1, $2)`,
+        [session.username, `Renamed/updated convocation session: ID=${id}, new details: session_number=${updatedSess.session_number}, session_name='${updatedSess.session_name}'`]
+      );
+
+      return updatedSess;
     });
 
     return NextResponse.json({ success: true, data });
@@ -215,6 +336,12 @@ export async function DELETE(req: Request) {
     }
 
     await runAsAdmin(async (client) => {
+      // Check if student records exist to enforce lock
+      const studentsCheck = await client.query('SELECT 1 FROM students LIMIT 1');
+      if (studentsCheck.rows.length > 0) {
+        throw new Error('Modifications are locked because student records exist in the database.');
+      }
+
       // Get session number
       const sRes = await client.query('SELECT session_number FROM convocation_sessions WHERE id = $1', [id]);
       if (sRes.rows.length === 0) {
@@ -236,6 +363,13 @@ export async function DELETE(req: Request) {
       );
       const activeYear = activeYearRes.rows[0]?.convocation_year || "2026";
       await client.query(syncGraduationDatesQuery, [activeYear]);
+
+      // Audit Log
+      await client.query(
+        `INSERT INTO audit_logs (admin_id, action_taken)
+         VALUES ($1, $2)`,
+        [session.username, `Deleted convocation session number=${sNum}`]
+      );
     });
 
     return NextResponse.json({ success: true, message: 'Session deleted successfully.' });

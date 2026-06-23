@@ -99,6 +99,13 @@ export async function POST(req: Request) {
         
         inserted.push(res.rows[0]);
       }
+      // Write audit log
+      await client.query(
+        `INSERT INTO audit_logs (admin_id, action_taken)
+         VALUES ($1, $2)`,
+        [session.username, `Bulk imported ${inserted.length} degrees via Excel`]
+      );
+
       return inserted;
     });
 

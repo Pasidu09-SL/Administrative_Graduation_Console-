@@ -1,9 +1,14 @@
 import { NextResponse } from 'next/server';
 import { runAsAdmin } from '@/lib/db';
-import { signMagicToken } from '@/lib/auth';
+import { getAdminSession, signMagicToken } from '@/lib/auth';
 
 export async function POST(req: Request) {
   try {
+    const session = await getAdminSession();
+    if (!session) {
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    }
+
     const { rows } = await req.json();
     if (!Array.isArray(rows) || rows.length === 0) {
       return NextResponse.json({ success: false, error: 'No data rows provided to commit.' }, { status: 400 });
@@ -18,17 +23,55 @@ export async function POST(req: Request) {
     });
     const activeYear = activeYearRes.rows[0]?.convocation_year || '2026';
 
-    const { degrees, sessions } = await runAsAdmin(async (client) => {
+    const { degrees, sessions, allocatedGroups } = await runAsAdmin(async (client) => {
       const degRes = await client.query("SELECT id, type, faculty FROM degrees");
       const sessRes = await client.query("SELECT faculty_1, faculty_2, session_date FROM convocation_sessions");
-      return { degrees: degRes.rows, sessions: sessRes.rows };
+      
+      // Determine which groups have seating allocated already for active year
+      const seatingRes = await client.query(
+        `SELECT DISTINCT s.faculty, d.type as degree_type
+         FROM students s
+         JOIN degrees d ON s.degree_id = d.id
+         WHERE s.seat_number IS NOT NULL AND s.convocation_year = $1`,
+        [activeYear]
+      );
+      const allocated = new Set<string>();
+      for (const row of seatingRes.rows) {
+        if (row.degree_type === 'External') {
+          allocated.add('All External Degrees');
+        } else {
+          allocated.add(`${row.faculty} (Internal)`);
+        }
+      }
+
+      return { 
+        degrees: degRes.rows, 
+        sessions: sessRes.rows,
+        allocatedGroups: allocated
+      };
     });
 
-    const host = req.headers.get('x-forwarded-host') || req.headers.get('host') || 'graduation-portal.duzb.me';
-    const proto = req.headers.get('x-forwarded-proto') || 'https';
     const origin = process.env.NODE_ENV === 'production' 
-  ? 'https://graduation-portal.duzb.me' 
-  : 'http://localhost:3000'; // Fallback for local testing environment
+      ? 'https://graduation-portal.duzb.me' 
+      : 'http://localhost:3000'; // Fallback for local testing environment
+
+    // Sort onboarded students by class (First Class first, then Second Upper, then Second Lower, then Pass) and GPA descending
+    const getClassPriority = (cls: string = '') => {
+      const c = (cls || '').toLowerCase();
+      if (c.includes('first')) return 1;
+      if (c.includes('upper') || c.includes('second class (upper') || c.includes('second class upper') || c.includes('second division upper')) return 2;
+      if (c.includes('lower') || c.includes('second class (lower') || c.includes('second class lower') || c.includes('second division lower')) return 3;
+      return 4; // Pass, General, Ordinary, etc.
+    };
+
+    rows.sort((a: any, b: any) => {
+      const pA = getClassPriority(a.class);
+      const pB = getClassPriority(b.class);
+      if (pA !== pB) return pA - pB;
+      const gpaA = a.gpa === '-' || a.gpa === undefined || a.gpa === null ? 0 : parseFloat(a.gpa);
+      const gpaB = b.gpa === '-' || b.gpa === undefined || b.gpa === null ? 0 : parseFloat(b.gpa);
+      return gpaB - gpaA;
+    });
 
     const notifications: any[] = [];
 
@@ -66,6 +109,9 @@ export async function POST(req: Request) {
         const matchedSession = sessions.find((s: any) => s.faculty_1 === groupName || s.faculty_2 === groupName);
         const graduationDate = matchedSession ? matchedSession.session_date : null;
 
+        // Determine if this is a late addition
+        const isLate = allocatedGroups.has(groupName);
+
         const magicToken = signMagicToken(email, registration_no, activeYear);
         const magicLink = `${origin}/api/student/auth/magic-login?email=${encodeURIComponent(email.toLowerCase().trim())}&token=${encodeURIComponent(magicToken)}`;
 
@@ -77,7 +123,7 @@ export async function POST(req: Request) {
         });
 
         placeholders.push(
-          `($${index}, $${index + 1}, $${index + 2}, $${index + 3}, $${index + 4}, $${index + 5}, $${index + 6}, $${index + 7}, $${index + 8}, $${index + 9}, $${index + 10}, $${index + 11}, $${index + 12}, $${index + 13}, $${index + 14}::date, $${index + 15}::date)`
+          `($${index}, $${index + 1}, $${index + 2}, $${index + 3}, $${index + 4}, $${index + 5}, $${index + 6}, $${index + 7}, $${index + 8}, $${index + 9}, $${index + 10}, $${index + 11}, $${index + 12}, $${index + 13}, $${index + 14}::date, $${index + 15}::date, $${index + 16}::boolean)`
         );
 
         values.push(
@@ -96,15 +142,16 @@ export async function POST(req: Request) {
           magicToken,
           activeYear,
           effective_date || null,
-          graduationDate || null
+          graduationDate || null,
+          isLate
         );
         
-        index += 16;
+        index += 17;
       }
 
       const query = `
         INSERT INTO students (
-          name_with_initials, full_name, registration_no, index_no, nic_no, faculty, degree_id, address, contact_no, email, gpa, class, magic_token, convocation_year, effective_date, graduation_date
+          name_with_initials, full_name, registration_no, index_no, nic_no, faculty, degree_id, address, contact_no, email, gpa, class, magic_token, convocation_year, effective_date, graduation_date, is_late_addition
         )
         VALUES ${placeholders.join(', ')}
         ON CONFLICT (registration_no, convocation_year) DO UPDATE SET
@@ -122,10 +169,18 @@ export async function POST(req: Request) {
           magic_token = EXCLUDED.magic_token,
           effective_date = EXCLUDED.effective_date,
           graduation_date = EXCLUDED.graduation_date,
+          is_late_addition = EXCLUDED.is_late_addition,
           updated_at = CURRENT_TIMESTAMP
       `;
 
       await client.query(query, values);
+
+      // Audit logging for bulk import
+      await client.query(
+        `INSERT INTO audit_logs (admin_id, action_taken)
+         VALUES ($1, $2)`,
+        [session.username, `Bulk onboarded ${rows.length} candidates via Excel sheet for convocation year ${activeYear}`]
+      );
     });
 
     const durationMs = Date.now() - startTime;

@@ -290,3 +290,146 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ success: false, error: err.message }, { status: 400 });
   }
 }
+
+// PATCH: Edit student details manually
+export async function PATCH(req: Request) {
+  try {
+    const session = await getAdminSession();
+    if (!session) {
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const body = await req.json();
+    const {
+      id,
+      name_with_initials,
+      full_name,
+      registration_no,
+      index_no,
+      nic_no,
+      gpa,
+      class: classVal,
+      effective_date
+    } = body;
+
+    if (!id) {
+      return NextResponse.json({ success: false, error: 'Student ID is required.' }, { status: 400 });
+    }
+
+    const data = await runAsAdmin(async (client) => {
+      // 1. Get original student details
+      const studentRes = await client.query('SELECT * FROM students WHERE id = $1', [id]);
+      const original = studentRes.rows[0];
+      if (!original) {
+        throw new Error('Student record not found.');
+      }
+
+      const activeYear = original.convocation_year;
+
+      // 2. Duplicate checks
+      if (registration_no && registration_no.trim() !== original.registration_no) {
+        const checkReg = await client.query(
+          'SELECT 1 FROM students WHERE registration_no = $1 AND convocation_year = $2 AND id <> $3',
+          [registration_no.trim(), activeYear, id]
+        );
+        if (checkReg.rows.length > 0) {
+          throw new Error(`Registration No '${registration_no}' already exists for convocation year ${activeYear}.`);
+        }
+      }
+
+      if (index_no && index_no.trim() !== (original.index_no || '')) {
+        const checkIdx = await client.query(
+          'SELECT 1 FROM students WHERE index_no = $1 AND convocation_year = $2 AND id <> $3',
+          [index_no.trim(), activeYear, id]
+        );
+        if (checkIdx.rows.length > 0) {
+          throw new Error(`Index No '${index_no}' already exists for convocation year ${activeYear}.`);
+        }
+      }
+
+      if (nic_no && nic_no.trim() !== original.nic_no) {
+        const checkNic = await client.query(
+          'SELECT 1 FROM students WHERE nic_no = $1 AND convocation_year = $2 AND id <> $3',
+          [nic_no.trim(), activeYear, id]
+        );
+        if (checkNic.rows.length > 0) {
+          throw new Error(`NIC No '${nic_no}' already exists for convocation year ${activeYear}.`);
+        }
+      }
+
+      // 3. Compute detailed field diffs
+      const diffs: string[] = [];
+      const updateFields: string[] = [];
+      const updateValues: any[] = [];
+      let pIndex = 1;
+
+      const checkDiff = (field: string, newValue: any, originalValue: any) => {
+        if (newValue !== undefined) {
+          const normNew = typeof newValue === 'string' ? newValue.trim() : newValue;
+          const normOrig = originalValue;
+          if (normNew !== normOrig) {
+            diffs.push(`${field}: "${normOrig || ''}" -> "${normNew || ''}"`);
+            updateFields.push(`${field} = $${pIndex}`);
+            updateValues.push(normNew);
+            pIndex++;
+          }
+        }
+      };
+
+      checkDiff('name_with_initials', name_with_initials, original.name_with_initials);
+      checkDiff('full_name', full_name, original.full_name);
+      checkDiff('registration_no', registration_no, original.registration_no);
+      checkDiff('index_no', index_no === '' ? null : index_no, original.index_no);
+      checkDiff('nic_no', nic_no, original.nic_no);
+      
+      const parsedGpa = gpa === '' || gpa === '-' || gpa === null ? null : parseFloat(gpa);
+      const origGpa = original.gpa !== null && original.gpa !== undefined ? parseFloat(original.gpa) : null;
+      if (parsedGpa !== origGpa) {
+        diffs.push(`gpa: "${origGpa || ''}" -> "${parsedGpa || ''}"`);
+        updateFields.push(`gpa = $${pIndex}`);
+        updateValues.push(parsedGpa);
+        pIndex++;
+      }
+
+      checkDiff('class', classVal, original.class);
+
+      // Date comparison helper
+      const formatDate = (d: any) => d ? new Date(d).toISOString().substring(0, 10) : null;
+      const origEffDate = formatDate(original.effective_date);
+      const newEffDate = effective_date ? formatDate(effective_date) : null;
+      if (newEffDate !== origEffDate) {
+        diffs.push(`effective_date: "${origEffDate || ''}" -> "${newEffDate || ''}"`);
+        updateFields.push(`effective_date = $${pIndex}::date`);
+        updateValues.push(newEffDate);
+        pIndex++;
+      }
+
+      if (updateFields.length > 0) {
+        updateValues.push(id);
+        const query = `
+          UPDATE students 
+          SET ${updateFields.join(', ')}, updated_at = CURRENT_TIMESTAMP
+          WHERE id = $${pIndex}
+          RETURNING *
+        `;
+        const updateRes = await client.query(query, updateValues);
+
+        // Write a log in the audit logs table
+        const diffText = diffs.join(', ');
+        await client.query(
+          `INSERT INTO audit_logs (admin_id, student_id, action_taken)
+           VALUES ($1, $2, $3)`,
+          [session.username, id, `Edited candidate details. Changes: ${diffText}`]
+        );
+
+        return updateRes.rows[0];
+      }
+
+      return original;
+    });
+
+    return NextResponse.json({ success: true, data });
+  } catch (err: any) {
+    return NextResponse.json({ success: false, error: err.message }, { status: 400 });
+  }
+}

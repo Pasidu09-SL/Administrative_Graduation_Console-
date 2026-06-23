@@ -162,7 +162,6 @@ export default function AdminDashboard() {
     | "accounts"
     | "email_templates"
     | "registry"
-    | "faculties_sessions"
     | "audit_logs"
     | "db_maintenance"
     | "dispatch"
@@ -535,6 +534,36 @@ export default function AdminDashboard() {
   const [ingestFacultyFilter, setIngestFacultyFilter] = useState("");
   const [ingestDegreeFilter, setIngestDegreeFilter] = useState("");
   const [selectedIngestStudents, setSelectedIngestStudents] = useState<string[]>([]);
+
+  // --- Custom State Variables for Advanced Refinements ---
+  const [hasStudents, setHasStudents] = useState(false);
+  const [showEditGroupsModal, setShowEditGroupsModal] = useState(false);
+  const [showEditSessionsModal, setShowEditSessionsModal] = useState(false);
+  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
+  const [renamingSessionNumber, setRenamingSessionNumber] = useState("");
+  const [renamingSessionName, setRenamingSessionName] = useState("");
+  const [renamingFacultyId, setRenamingFacultyId] = useState<string | null>(null);
+  const [renamingFacultyName, setRenamingFacultyName] = useState("");
+  const [showManualAddModal, setShowManualAddModal] = useState(false);
+  const [editingStudent, setEditingStudent] = useState<any | null>(null);
+  const [manualStudent, setManualStudent] = useState({
+    registration_no: "",
+    index_no: "",
+    nic_no: "",
+    full_name: "",
+    name_with_initials: "",
+    email: "",
+    contact_no: "",
+    address: "",
+    gpa: "",
+    class: "",
+    faculty: "",
+    degree_id: "",
+    effective_date: "",
+  });
+  const [bulkSlipScope, setBulkSlipScope] = useState("system");
+  const [bulkSlipFaculty, setBulkSlipFaculty] = useState("");
+  const [bulkSlipDegreeId, setBulkSlipDegreeId] = useState("");
 
   // Updated official Faculty Names according to user request
   const FACULTIES =
@@ -997,6 +1026,7 @@ const handleDownloadMockCertificate = async () => {
       loadConvocationYears();
       loadEmailTemplates();
       loadDispatcherStudents();
+      loadRegistryStatus();
       if (staffUser.role === "Administrator") {
         loadStaff();
       }
@@ -1469,7 +1499,6 @@ const generateVerificationLetterPDF = async (
       [
         "accounts",
         "db_maintenance",
-        "faculties_sessions",
         "audit_logs",
         "email_templates",
       ].includes(activeTab)
@@ -2249,102 +2278,7 @@ const generateVerificationLetterPDF = async (
     }
   };
 
-  const handleAddFaculty = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newFacultyName.trim()) return;
-    setLoading(true);
-    try {
-      const res = await fetch("/api/admin/faculties", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newFacultyName }),
-      });
-      const json = await res.json();
-      if (res.ok && json.success) {
-        triggerAlert(true, `Faculty '${newFacultyName}' added successfully.`);
-        setNewFacultyName("");
-        loadFaculties();
-      } else {
-        triggerAlert(false, json.error || "Failed to add faculty.");
-      }
-    } catch (err: any) {
-      triggerAlert(false, err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
 
-  const handleDeleteFaculty = async (id: string, name: string) => {
-    if (!confirm(`Are you sure you want to delete Faculty: ${name}?`)) return;
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/admin/faculties?id=${id}`, {
-        method: "DELETE",
-      });
-      const json = await res.json();
-      if (res.ok && json.success) {
-        triggerAlert(true, `Faculty '${name}' deleted successfully.`);
-        loadFaculties();
-      } else {
-        triggerAlert(false, json.error || "Failed to delete faculty.");
-      }
-    } catch (err: any) {
-      triggerAlert(false, err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleAddSession = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newSessionNumber) return;
-    setLoading(true);
-    try {
-      const res = await fetch("/api/admin/convocation-sessions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionNumber: parseInt(newSessionNumber),
-          sessionName: newSessionName,
-        }),
-      });
-      const json = await res.json();
-      if (res.ok && json.success) {
-        triggerAlert(true, `Session ${newSessionNumber} added successfully.`);
-        setNewSessionNumber("");
-        setNewSessionName("");
-        loadConvocationSessions();
-      } else {
-        triggerAlert(false, json.error || "Failed to add session.");
-      }
-    } catch (err: any) {
-      triggerAlert(false, err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDeleteSession = async (id: number, sessionNum: number) => {
-    if (!confirm(`Are you sure you want to delete Session ${sessionNum}?`))
-      return;
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/admin/convocation-sessions?id=${id}`, {
-        method: "DELETE",
-      });
-      const json = await res.json();
-      if (res.ok && json.success) {
-        triggerAlert(true, `Session ${sessionNum} deleted successfully.`);
-        loadConvocationSessions();
-      } else {
-        triggerAlert(false, json.error || "Failed to delete session.");
-      }
-    } catch (err: any) {
-      triggerAlert(false, err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleTransitionActiveSession = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2408,6 +2342,279 @@ const generateVerificationLetterPDF = async (
       triggerAlert(false, err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // --- Custom Handlers for Advanced Refinements ---
+
+  const loadRegistryStatus = async () => {
+    try {
+      const res = await fetch("/api/admin/registry/status");
+      const json = await res.json();
+      if (res.ok && json.success) {
+        setHasStudents(json.hasStudents);
+      }
+    } catch (err) {
+      console.error("Failed to fetch registry status:", err);
+    }
+  };
+
+  const handleAddFaculty = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newFacultyName.trim()) return;
+    setLoading(true);
+    try {
+      const res = await fetch("/api/admin/faculties", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newFacultyName }),
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        triggerAlert(true, `Successfully added group: ${newFacultyName}`);
+        setNewFacultyName("");
+        loadFaculties();
+        loadRegistryStatus();
+      } else {
+        triggerAlert(false, json.error || "Failed to add group.");
+      }
+    } catch (err: any) {
+      triggerAlert(false, err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRenameFaculty = async (id: string, name: string) => {
+    if (!name.trim()) return;
+    setLoading(true);
+    try {
+      const res = await fetch("/api/admin/faculties", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, name }),
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        triggerAlert(true, `Successfully renamed group to: ${name}`);
+        setRenamingFacultyId(null);
+        loadFaculties();
+        loadDegrees();
+      } else {
+        triggerAlert(false, json.error || "Failed to rename group.");
+      }
+    } catch (err: any) {
+      triggerAlert(false, err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteFaculty = async (id: string, name: string) => {
+    if (!confirm(`Are you sure you want to remove the group "${name}"?`)) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/admin/faculties?id=${id}`, {
+        method: "DELETE",
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        triggerAlert(true, `Successfully removed group: ${name}`);
+        loadFaculties();
+        loadRegistryStatus();
+      } else {
+        triggerAlert(false, json.error || "Failed to remove group.");
+      }
+    } catch (err: any) {
+      triggerAlert(false, err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAddSession = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newSessionNumber || !newSessionName.trim()) return;
+    setLoading(true);
+    try {
+      const res = await fetch("/api/admin/convocation-sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionNumber: parseInt(newSessionNumber),
+          sessionName: newSessionName,
+        }),
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        triggerAlert(true, `Successfully added session: ${newSessionName}`);
+        setNewSessionNumber("");
+        setNewSessionName("");
+        loadConvocationSessions();
+        loadRegistryStatus();
+      } else {
+        triggerAlert(false, json.error || "Failed to add session.");
+      }
+    } catch (err: any) {
+      triggerAlert(false, err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRenameSession = async (id: string, sessionNumber: number, sessionName: string) => {
+    if (!sessionName.trim() || isNaN(sessionNumber)) return;
+    setLoading(true);
+    try {
+      const res = await fetch("/api/admin/convocation-sessions", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, sessionNumber, sessionName }),
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        triggerAlert(true, `Successfully updated session details.`);
+        setRenamingSessionId(null);
+        loadConvocationSessions();
+      } else {
+        triggerAlert(false, json.error || "Failed to update session details.");
+      }
+    } catch (err: any) {
+      triggerAlert(false, err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteSession = async (id: string, sessionNumber: number) => {
+    if (!confirm(`Are you sure you want to delete Session ${sessionNumber}?`)) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/admin/convocation-sessions?id=${id}`, {
+        method: "DELETE",
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        triggerAlert(true, `Successfully deleted Session ${sessionNumber}`);
+        loadConvocationSessions();
+        loadRegistryStatus();
+      } else {
+        triggerAlert(false, json.error || "Failed to delete session.");
+      }
+    } catch (err: any) {
+      triggerAlert(false, err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAddManualStudent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const res = await fetch("/api/admin/review/manual-add", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...manualStudent,
+          convocation_year: activeConvocationYear,
+        }),
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        triggerAlert(true, "Student added manually successfully.");
+        setShowManualAddModal(false);
+        setManualStudent({
+          registration_no: "",
+          index_no: "",
+          nic_no: "",
+          full_name: "",
+          name_with_initials: "",
+          email: "",
+          contact_no: "",
+          address: "",
+          gpa: "",
+          class: "",
+          faculty: "",
+          degree_id: "",
+          effective_date: "",
+        });
+        loadRegistryStudents();
+        loadRegistryStatus();
+      } else {
+        triggerAlert(false, json.error || "Failed to add student manually.");
+      }
+    } catch (err: any) {
+      triggerAlert(false, err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleUpdateStudentDetails = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingStudent) return;
+    setLoading(true);
+    try {
+      const res = await fetch("/api/admin/review", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: editingStudent.id,
+          name_with_initials: editingStudent.name_with_initials,
+          full_name: editingStudent.full_name,
+          registration_no: editingStudent.registration_no,
+          index_no: editingStudent.index_no,
+          nic_no: editingStudent.nic_no,
+          gpa: editingStudent.gpa,
+          class: editingStudent.class,
+          effective_date: editingStudent.effective_date,
+        }),
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        triggerAlert(true, "Student details updated successfully.");
+        setEditingStudent(null);
+        loadRegistryStudents();
+        loadIngestStudents();
+      } else {
+        triggerAlert(false, json.error || "Failed to update student details.");
+      }
+    } catch (err: any) {
+      triggerAlert(false, err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDownloadSlipsZip = async () => {
+    try {
+      const query = new URLSearchParams();
+      query.set("scope", bulkSlipScope);
+      if (bulkSlipScope === "faculty") {
+        query.set("faculty", bulkSlipFaculty);
+      } else if (bulkSlipScope === "degree") {
+        query.set("degreeId", bulkSlipDegreeId);
+      }
+
+      const res = await fetch(`/api/admin/audit/bulk-slips?${query.toString()}`);
+      if (!res.ok) {
+        const json = await res.json();
+        throw new Error(json.error || "Failed to download ZIP file.");
+      }
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `payment_slips_${bulkSlipScope}_${new Date().toISOString().slice(0,10)}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      triggerAlert(true, "ZIP archive downloaded successfully.");
+    } catch (err: any) {
+      triggerAlert(false, err.message);
     }
   };
 
@@ -3488,10 +3695,6 @@ const generateVerificationLetterPDF = async (
                       {[
                         { id: "accounts", label: "Account Management" },
                         { id: "db_maintenance", label: "Database Management" },
-                        {
-                          id: "faculties_sessions",
-                          label: "Faculty & Session Management",
-                        },
                         { id: "audit_logs", label: "System Audit Logs" },
                         {
                           id: "email_templates",
@@ -3827,13 +4030,39 @@ const generateVerificationLetterPDF = async (
           {activeTab === "ingest" && (
             <div className="space-y-6">
               <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-2xl shadow-sm">
-                <CardHeader>
-                  <CardTitle className="text-base font-bold text-slate-950 dark:text-white">
-                    Bulk Faculty Student Onboarding
-                  </CardTitle>
-                  <CardDescription className="text-[11px] text-slate-500">
-                    Upload official Excel student registry list.
-                  </CardDescription>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
+                  <div>
+                    <CardTitle className="text-base font-bold text-slate-955 dark:text-white">
+                      Bulk Faculty Student Onboarding
+                    </CardTitle>
+                    <CardDescription className="text-[11px] text-slate-500 mt-0.5">
+                      Upload official Excel student registry list or add a candidate manually.
+                    </CardDescription>
+                  </div>
+                  <Button
+                    onClick={() => {
+                      setManualStudent({
+                        registration_no: "",
+                        index_no: "",
+                        nic_no: "",
+                        full_name: "",
+                        name_with_initials: "",
+                        email: "",
+                        contact_no: "",
+                        address: "",
+                        gpa: "",
+                        class: "",
+                        faculty: "",
+                        degree_id: "",
+                        effective_date: "",
+                      });
+                      setShowManualAddModal(true);
+                    }}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold h-9 text-xs rounded-xl shadow-md shadow-blue-500/10 flex items-center gap-1.5"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Add Student Manually
+                  </Button>
                 </CardHeader>
                 <CardContent className="space-y-6">
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
@@ -4121,14 +4350,24 @@ const generateVerificationLetterPDF = async (
                                 </div>
                               </TableCell>
                               <TableCell className="px-4 py-3 text-center">
-                                <Button
-                                  variant="ghost"
-                                  size="xs"
-                                  onClick={() => handleDeleteStudent(st.id)}
-                                  className="text-red-500 hover:text-red-750 dark:text-red-400 dark:hover:text-red-300 hover:bg-red-50/50 dark:hover:bg-red-950/20 font-bold"
-                                >
-                                  Delete
-                                </Button>
+                                <div className="flex items-center justify-center gap-1.5">
+                                  <Button
+                                    size="xs"
+                                    onClick={() => setEditingStudent(st)}
+                                    className="h-7 text-[10px] px-2.5 rounded-lg bg-blue-650 hover:bg-blue-750 text-white font-bold flex items-center gap-1 shadow shadow-blue-500/20"
+                                  >
+                                    <Edit className="h-3.5 w-3.5" />
+                                    Edit
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="xs"
+                                    onClick={() => handleDeleteStudent(st.id)}
+                                    className="text-red-500 hover:text-red-750 dark:text-red-400 dark:hover:text-red-300 hover:bg-red-50/50 dark:hover:bg-red-950/20 font-bold"
+                                  >
+                                    Delete
+                                  </Button>
+                                </div>
                               </TableCell>
                             </TableRow>
                           ))
@@ -4951,6 +5190,96 @@ const generateVerificationLetterPDF = async (
           {/* 4. SPLIT AUDIT CENTER WORKSPACE */}
           {activeTab === "audit" && (
             <div className="space-y-6">
+              {/* Bulk Payment Slips Downloader Card */}
+              <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-2xl shadow-sm p-5 animate-in fade-in duration-200">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                      <Download className="h-4.5 w-4.5 text-blue-600 dark:text-blue-500" />
+                      Bulk Payment Slips Downloader
+                    </h3>
+                    <p className="text-[11px] text-slate-550 mt-0.5">
+                      Download all uploaded payment slips as a ZIP archive, renamed by Candidate Registration Numbers.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    {/* Scope select */}
+                    <div className="flex flex-col gap-1">
+                      <span className="text-[9px] uppercase font-bold text-slate-500">Scope</span>
+                      <select
+                        value={bulkSlipScope}
+                        onChange={(e) => {
+                          setBulkSlipScope(e.target.value);
+                          setBulkSlipFaculty("");
+                          setBulkSlipDegreeId("");
+                        }}
+                        className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-300 px-3 py-1.5 rounded-xl h-9 min-w-[130px] font-bold focus:outline-none"
+                      >
+                        <option value="system">Entire System</option>
+                        <option value="faculty">By Faculty</option>
+                        <option value="degree">By Degree</option>
+                      </select>
+                    </div>
+
+                    {/* Faculty Select (shown for faculty or degree scope) */}
+                    {(bulkSlipScope === "faculty" || bulkSlipScope === "degree") && (
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[9px] uppercase font-bold text-slate-500">Faculty</span>
+                        <select
+                          value={bulkSlipFaculty}
+                          onChange={(e) => {
+                            setBulkSlipFaculty(e.target.value);
+                            setBulkSlipDegreeId("");
+                          }}
+                          className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-800 dark:text-slate-350 px-3 py-1.5 rounded-xl h-9 min-w-[150px] font-bold focus:outline-none"
+                        >
+                          <option value="">Select Faculty...</option>
+                          {FACULTIES.map((fac) => (
+                            <option key={fac} value={fac}>
+                              {fac}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    {/* Degree Select (shown for degree scope) */}
+                    {bulkSlipScope === "degree" && (
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[9px] uppercase font-bold text-slate-500">Degree</span>
+                        <select
+                          value={bulkSlipDegreeId}
+                          onChange={(e) => setBulkSlipDegreeId(e.target.value)}
+                          className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-xs text-slate-850 dark:text-slate-350 px-3 py-1.5 rounded-xl h-9 min-w-[200px] font-bold focus:outline-none"
+                        >
+                          <option value="">Select Degree...</option>
+                          {degrees
+                            .filter((d) => !bulkSlipFaculty || d.faculty === bulkSlipFaculty)
+                            .map((d) => (
+                              <option key={d.id} value={d.id}>
+                                {d.code} - {d.name_en}
+                              </option>
+                            ))}
+                        </select>
+                      </div>
+                    )}
+
+                    <Button
+                      onClick={handleDownloadSlipsZip}
+                      disabled={
+                        loading ||
+                        (bulkSlipScope === "faculty" && !bulkSlipFaculty) ||
+                        (bulkSlipScope === "degree" && !bulkSlipDegreeId)
+                      }
+                      className="bg-blue-600 hover:bg-blue-750 text-white font-bold h-9 text-xs rounded-xl shadow-md shadow-blue-500/10 flex items-center gap-1.5 mt-4"
+                    >
+                      <Download className="h-4 w-4" />
+                      Download ZIP
+                    </Button>
+                  </div>
+                </div>
+              </Card>
+
               {/* Audit grid filters */}
               <div className="flex flex-col sm:flex-row gap-4 items-center flex-wrap">
                 <select
@@ -5352,11 +5681,38 @@ const generateVerificationLetterPDF = async (
                     {/* SESSION ALLOCATION WORKSPACE */}
           {activeTab === "session_allocation" && (
             <div className="space-y-6">
-              <div>
-                <h2 className="text-xl font-bold text-slate-955 dark:text-white">Session Mapping Control</h2>
-                <p className="text-xs text-slate-500 mt-1">
-                  Define dates, times, and map student seating groups (faculties/externals) to graduation sessions.
-                </p>
+              {/* Onboarding Lock Warning Banner */}
+              {hasStudents && (
+                <div className="bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-455 p-4 rounded-2xl text-xs font-semibold flex items-center gap-3 shadow-sm animate-in fade-in duration-250">
+                  <ShieldAlert className="h-5 w-5 text-amber-600 dark:text-amber-455 shrink-0" />
+                  <div>
+                    <p className="font-bold text-amber-850 dark:text-amber-400">Onboarding Lock Active</p>
+                    <p className="text-[11px] opacity-90 mt-0.5">Session and group configuration changes are locked because candidate records already exist in the registry. You must clear the registry list to modify groups or sessions.</p>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white dark:bg-slate-900/30 border border-slate-200 dark:border-slate-900 rounded-2xl p-5 shadow-sm animate-in fade-in duration-200">
+                <div>
+                  <h2 className="text-base font-bold text-slate-955 dark:text-white">Session Mapping Control</h2>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Define dates, times, and map student seating groups (faculties/externals) to graduation sessions.
+                  </p>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <Button
+                    onClick={() => setShowEditGroupsModal(true)}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold h-9 text-xs rounded-xl shadow-md shadow-blue-500/10 flex items-center gap-1.5"
+                  >
+                    Edit Groups
+                  </Button>
+                  <Button
+                    onClick={() => setShowEditSessionsModal(true)}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold h-9 text-xs rounded-xl shadow-md shadow-blue-500/10 flex items-center gap-1.5"
+                  >
+                    Edit Sessions
+                  </Button>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -6684,145 +7040,7 @@ const generateVerificationLetterPDF = async (
               </div>
             )}
 
-          {/* FACULTY & SESSION COORDINATOR WORKSPACE */}
-          {activeTab === "faculties_sessions" &&
-            staffUser?.role === "Administrator" && (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Faculty Manager Panel */}
-                <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-2xl shadow-sm">
-                  <CardHeader>
-                    <CardTitle className="text-base font-bold text-slate-955 dark:text-white">
-                      Faculty Manager
-                    </CardTitle>
-                    <CardDescription className="text-[11px] text-slate-555">
-                      Configure university faculties parameter list.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <form onSubmit={handleAddFaculty} className="flex gap-2">
-                      <Input
-                        required
-                        value={newFacultyName}
-                        onChange={(e) => setNewFacultyName(e.target.value)}
-                        placeholder="Faculty Name (e.g. Faculty of Technology)"
-                        className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 text-xs rounded-lg h-9 flex-1"
-                      />
-                      <Button
-                        type="submit"
-                        disabled={loading}
-                        className="bg-blue-600 hover:bg-blue-700 text-white font-bold h-9 text-xs rounded-lg px-3 shadow shrink-0"
-                      >
-                        Add Faculty
-                      </Button>
-                    </form>
 
-                    <div className="max-h-64 overflow-y-auto border border-slate-100 dark:border-slate-900 rounded-xl divide-y divide-slate-100 dark:divide-slate-900">
-                      {facultiesList.length === 0 ? (
-                        <div className="p-4 text-center text-xs text-slate-500 italic">
-                          No faculties registered in system parameters.
-                        </div>
-                      ) : (
-                        facultiesList.map((fac) => (
-                          <div
-                            key={fac.id}
-                            className="flex items-center justify-between p-3 bg-white dark:bg-slate-950/20 text-xs"
-                          >
-                            <span className="font-bold text-slate-800 dark:text-slate-200">
-                              {fac.name}
-                            </span>
-                            <Button
-                              variant="ghost"
-                              size="xs"
-                              onClick={() =>
-                                handleDeleteFaculty(fac.id, fac.name)
-                              }
-                              className="text-red-550 hover:text-red-655 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-lg p-1 h-7 text-[10px]"
-                            >
-                              Remove
-                            </Button>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* Session Coordinator Panel */}
-                <Card className="border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-900/30 backdrop-blur-md rounded-2xl shadow-sm">
-                  <CardHeader>
-                    <CardTitle className="text-base font-bold text-slate-955 dark:text-white">
-                      Session Coordinator
-                    </CardTitle>
-                    <CardDescription className="text-[11px] text-slate-555">
-                      Configure graduation seating slots sessions.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <form onSubmit={handleAddSession} className="flex gap-2">
-                      <Input
-                        required
-                        type="number"
-                        min="1"
-                        value={newSessionNumber}
-                        onChange={(e) => setNewSessionNumber(e.target.value)}
-                        placeholder="No. (e.g. 5)"
-                        className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 text-xs rounded-lg h-9 w-35"
-                      />
-                      <Input
-                        value={newSessionName}
-                        onChange={(e) => setNewSessionName(e.target.value)}
-                        placeholder="Name (e.g. Session 5 - Afternoon)"
-                        className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 text-xs rounded-lg h-9 flex-1"
-                      />
-                      <Button
-                        type="submit"
-                        disabled={loading}
-                        className="bg-blue-600 hover:bg-blue-700 text-white font-bold h-9 text-xs rounded-lg px-3 shadow shrink-0"
-                      >
-                        Add Session
-                      </Button>
-                    </form>
-
-                    <div className="max-h-64 overflow-y-auto border border-slate-100 dark:border-slate-900 rounded-xl divide-y divide-slate-100 dark:divide-slate-900">
-                      {convocationSessions.length === 0 ? (
-                        <div className="p-4 text-center text-xs text-slate-500 italic">
-                          No sessions registered in system parameters.
-                        </div>
-                      ) : (
-                        convocationSessions.map((sess) => (
-                          <div
-                            key={sess.id}
-                            className="flex items-center justify-between p-3 bg-white dark:bg-slate-950/20 text-xs"
-                          >
-                            <div className="flex items-center gap-2">
-                              <span className="bg-blue-100 dark:bg-blue-955 text-blue-700 dark:text-blue-450 px-2 py-0.5 rounded text-[10px] font-black font-mono">
-                                Num {sess.session_number}
-                              </span>
-                              <span className="font-bold text-slate-800 dark:text-slate-200">
-                                {sess.session_name}
-                              </span>
-                            </div>
-                            <Button
-                              variant="ghost"
-                              size="xs"
-                              onClick={() =>
-                                handleDeleteSession(
-                                  sess.id,
-                                  sess.session_number,
-                                )
-                              }
-                              className="text-red-500 hover:text-red-655 hover:bg-red-55 dark:hover:bg-red-950/20 rounded-lg p-1 h-7 text-[10px]"
-                            >
-                              Remove
-                            </Button>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-            )}
 
           {/* SYSTEM AUDIT LOGS WORKSPACE */}
           {activeTab === "audit_logs" &&
@@ -7955,6 +8173,656 @@ const generateVerificationLetterPDF = async (
               </div>
             </CardContent>
           </Card>
+        </div>
+      )}
+
+      {/* Edit Groups Modal */}
+      {showEditGroupsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={() => setShowEditGroupsModal(false)}>
+          <div
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
+              <div>
+                <h2 className="text-base font-bold text-slate-900 dark:text-white">Edit Groups (Faculties)</h2>
+                <p className="text-[11px] text-slate-550 dark:text-slate-400 mt-0.5">Add, list, rename, or remove university groups/faculties.</p>
+              </div>
+              <button
+                onClick={() => setShowEditGroupsModal(false)}
+                className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              {/* Warning if registry is locked */}
+              {hasStudents && (
+                <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 flex items-start gap-2.5">
+                  <ShieldAlert className="h-4.5 w-4.5 text-amber-500 shrink-0 mt-0.5" />
+                  <p className="text-[10px] text-amber-800 dark:text-amber-455 leading-relaxed font-semibold">
+                    Warning: Group management is locked because student records are registered in database. Discard all candidate data to enable changes.
+                  </p>
+                </div>
+              )}
+
+              {/* Add Group Form */}
+              <form onSubmit={handleAddFaculty} className="flex gap-2">
+                <Input
+                  required
+                  disabled={hasStudents || loading}
+                  value={newFacultyName}
+                  onChange={(e) => setNewFacultyName(e.target.value)}
+                  placeholder="e.g. Faculty of Technology"
+                  className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 text-xs rounded-xl h-9 flex-1"
+                />
+                <Button
+                  type="submit"
+                  disabled={hasStudents || loading}
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold h-9 text-xs rounded-xl px-4 shadow shadow-blue-500/20 shrink-0"
+                >
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add Group"}
+                </Button>
+              </form>
+
+              {/* Groups List */}
+              <div className="border border-slate-100 dark:border-slate-900 rounded-xl divide-y divide-slate-100 dark:divide-slate-900 overflow-hidden bg-slate-50/50 dark:bg-slate-955/20">
+                {facultiesList.length === 0 ? (
+                  <div className="p-4 text-center text-xs text-slate-500 italic">
+                    No groups/faculties registered.
+                  </div>
+                ) : (
+                  facultiesList.map((fac) => (
+                    <div
+                      key={fac.id}
+                      className="flex items-center justify-between p-3 text-xs gap-3"
+                    >
+                      {renamingFacultyId === fac.id ? (
+                        <div className="flex flex-1 gap-2 items-center">
+                          <Input
+                            type="text"
+                            value={renamingFacultyName}
+                            onChange={(e) => setRenamingFacultyName(e.target.value)}
+                            className="h-8 text-xs flex-1 bg-white dark:bg-slate-955"
+                          />
+                          <Button
+                            size="xs"
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-8 px-2"
+                            onClick={() => handleRenameFaculty(fac.id, renamingFacultyName)}
+                          >
+                            Save
+                          </Button>
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            className="h-8 px-2"
+                            onClick={() => setRenamingFacultyId(null)}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      ) : (
+                        <>
+                          <span className="font-bold text-slate-800 dark:text-slate-200">
+                            {fac.name}
+                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              disabled={hasStudents || loading}
+                              onClick={() => {
+                                setRenamingFacultyId(fac.id);
+                                setRenamingFacultyName(fac.name || "");
+                              }}
+                              className="text-blue-500 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950/20 rounded-lg p-1 h-7 text-[10px]"
+                            >
+                              Rename
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              disabled={hasStudents || loading}
+                              onClick={() => handleDeleteFaculty(fac.id, fac.name)}
+                              className="text-red-500 hover:text-red-750 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-lg p-1 h-7 text-[10px]"
+                            >
+                              Remove
+                            </Button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 border-t border-slate-100 dark:border-slate-800 flex justify-end shrink-0 bg-slate-50 dark:bg-slate-900/50">
+              <Button
+                onClick={() => setShowEditGroupsModal(false)}
+                className="h-9 rounded-xl text-xs font-bold px-4 border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800"
+                variant="outline"
+              >
+                Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Sessions Modal */}
+      {showEditSessionsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={() => setShowEditSessionsModal(false)}>
+          <div
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl w-full max-w-xl max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
+              <div>
+                <h2 className="text-base font-bold text-slate-900 dark:text-white">Edit Sessions</h2>
+                <p className="text-[11px] text-slate-550 dark:text-slate-400 mt-0.5">Add, list, rename, or remove convocation sessions.</p>
+              </div>
+              <button
+                onClick={() => setShowEditSessionsModal(false)}
+                className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              {/* Warning if registry is locked */}
+              {hasStudents && (
+                <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 flex items-start gap-2.5">
+                  <ShieldAlert className="h-4.5 w-4.5 text-amber-500 shrink-0 mt-0.5" />
+                  <p className="text-[10px] text-amber-800 dark:text-amber-455 leading-relaxed font-semibold">
+                    Warning: Session management is locked because student records are registered in database. Discard all candidate data to enable changes.
+                  </p>
+                </div>
+              )}
+
+              {/* Add Session Form */}
+              <form onSubmit={handleAddSession} className="flex gap-2">
+                <Input
+                  required
+                  type="number"
+                  min="1"
+                  disabled={hasStudents || loading}
+                  value={newSessionNumber}
+                  onChange={(e) => setNewSessionNumber(e.target.value)}
+                  placeholder="No."
+                  className="bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 text-xs rounded-xl h-9 w-20"
+                />
+                <Input
+                  required
+                  disabled={hasStudents || loading}
+                  value={newSessionName}
+                  onChange={(e) => setNewSessionName(e.target.value)}
+                  placeholder="e.g. Session 1 - Morning"
+                  className="bg-white dark:bg-slate-955 border-slate-200 dark:border-slate-900 text-slate-900 dark:text-slate-100 text-xs rounded-xl h-9 flex-1"
+                />
+                <Button
+                  type="submit"
+                  disabled={hasStudents || loading}
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold h-9 text-xs rounded-xl px-4 shadow shadow-blue-500/20 shrink-0"
+                >
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add Session"}
+                </Button>
+              </form>
+
+              {/* Sessions List */}
+              <div className="border border-slate-100 dark:border-slate-900 rounded-xl divide-y divide-slate-100 dark:divide-slate-900 overflow-hidden bg-slate-50/50 dark:bg-slate-955/20">
+                {convocationSessions.length === 0 ? (
+                  <div className="p-4 text-center text-xs text-slate-500 italic">
+                    No sessions registered in system parameters.
+                  </div>
+                ) : (
+                  convocationSessions.map((sess) => (
+                    <div
+                      key={sess.id}
+                      className="flex items-center justify-between p-3 text-xs gap-3"
+                    >
+                      {renamingSessionId === sess.id ? (
+                        <div className="flex flex-1 gap-2 items-center">
+                          <Input
+                            type="number"
+                            value={renamingSessionNumber}
+                            onChange={(e) => setRenamingSessionNumber(e.target.value)}
+                            className="h-8 text-xs w-16 bg-white dark:bg-slate-955"
+                          />
+                          <Input
+                            type="text"
+                            value={renamingSessionName}
+                            onChange={(e) => setRenamingSessionName(e.target.value)}
+                            className="h-8 text-xs flex-1 bg-white dark:bg-slate-955"
+                          />
+                          <Button
+                            size="xs"
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-8 px-2"
+                            onClick={() => handleRenameSession(sess.id, parseInt(renamingSessionNumber), renamingSessionName)}
+                          >
+                            Save
+                          </Button>
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            className="h-8 px-2"
+                            onClick={() => setRenamingSessionId(null)}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex items-center gap-2">
+                            <span className="bg-blue-100 dark:bg-blue-955 text-blue-700 dark:text-blue-450 px-2 py-0.5 rounded text-[10px] font-black font-mono">
+                              Num {sess.session_number}
+                            </span>
+                            <span className="font-bold text-slate-800 dark:text-slate-200">
+                              {sess.session_name}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              disabled={hasStudents || loading}
+                              onClick={() => {
+                                setRenamingSessionId(sess.id);
+                                setRenamingSessionNumber(sess.session_number.toString());
+                                setRenamingSessionName(sess.session_name || "");
+                              }}
+                              className="text-blue-500 hover:text-blue-755 hover:bg-blue-50 dark:hover:bg-blue-950/20 rounded-lg p-1 h-7 text-[10px]"
+                            >
+                              Rename
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              disabled={hasStudents || loading}
+                              onClick={() => handleDeleteSession(sess.id, sess.session_number)}
+                              className="text-red-500 hover:text-red-755 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-lg p-1 h-7 text-[10px]"
+                            >
+                              Remove
+                            </Button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 border-t border-slate-100 dark:border-slate-800 flex justify-end shrink-0 bg-slate-50 dark:bg-slate-900/50">
+              <Button
+                onClick={() => setShowEditSessionsModal(false)}
+                className="h-9 rounded-xl text-xs font-bold px-4 border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800"
+                variant="outline"
+              >
+                Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manual Onboarding Modal */}
+      {showManualAddModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={() => setShowManualAddModal(false)}>
+          <div
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
+              <div>
+                <h2 className="text-base font-bold text-slate-900 dark:text-white">Add Candidate Manually</h2>
+                <p className="text-[11px] text-slate-550 mt-0.5">Input details for manual ingestion. If seating has been allocated, they will seat at the end of their class.</p>
+              </div>
+              <button
+                onClick={() => setShowManualAddModal(false)}
+                className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Modal Content - Scrollable Form */}
+            <form onSubmit={handleAddManualStudent} className="flex-1 overflow-y-auto p-6 space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase font-bold text-slate-500">Registration Number</Label>
+                  <Input
+                    required
+                    value={manualStudent.registration_no}
+                    onChange={(e) => setManualStudent((p) => ({ ...p, registration_no: e.target.value }))}
+                    placeholder="e.g. 2020/CS/101"
+                    className="h-8.5 text-xs rounded-lg bg-white dark:bg-slate-950"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase font-bold text-slate-500">Index Number</Label>
+                  <Input
+                    required
+                    value={manualStudent.index_no}
+                    onChange={(e) => setManualStudent((p) => ({ ...p, index_no: e.target.value }))}
+                    placeholder="e.g. 20001015"
+                    className="h-8.5 text-xs rounded-lg bg-white dark:bg-slate-950"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase font-bold text-slate-500">NIC Number</Label>
+                  <Input
+                    required
+                    value={manualStudent.nic_no}
+                    onChange={(e) => setManualStudent((p) => ({ ...p, nic_no: e.target.value }))}
+                    placeholder="e.g. 200012345678"
+                    className="h-8.5 text-xs rounded-lg bg-white dark:bg-slate-950"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase font-bold text-slate-500">Effective Date</Label>
+                  <Input
+                    type="date"
+                    required
+                    value={manualStudent.effective_date}
+                    onChange={(e) => setManualStudent((p) => ({ ...p, effective_date: e.target.value }))}
+                    className="h-8.5 text-xs rounded-lg bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-100"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-[10px] uppercase font-bold text-slate-500">Name with Initials</Label>
+                <Input
+                  required
+                  value={manualStudent.name_with_initials}
+                  onChange={(e) => setManualStudent((p) => ({ ...p, name_with_initials: e.target.value }))}
+                  placeholder="e.g. A.B. Silva"
+                  className="h-8.5 text-xs rounded-lg bg-white dark:bg-slate-950"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-[10px] uppercase font-bold text-slate-500">Full Name</Label>
+                <Input
+                  required
+                  value={manualStudent.full_name}
+                  onChange={(e) => setManualStudent((p) => ({ ...p, full_name: e.target.value }))}
+                  placeholder="e.g. Aruni B. Silva"
+                  className="h-8.5 text-xs rounded-lg bg-white dark:bg-slate-950"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase font-bold text-slate-500">Email Address</Label>
+                  <Input
+                    type="email"
+                    required
+                    value={manualStudent.email}
+                    onChange={(e) => setManualStudent((p) => ({ ...p, email: e.target.value }))}
+                    placeholder="e.g. candidate@domain.com"
+                    className="h-8.5 text-xs rounded-lg bg-white dark:bg-slate-950"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase font-bold text-slate-500">Contact Number</Label>
+                  <Input
+                    required
+                    value={manualStudent.contact_no}
+                    onChange={(e) => setManualStudent((p) => ({ ...p, contact_no: e.target.value }))}
+                    placeholder="e.g. 0771234567"
+                    className="h-8.5 text-xs rounded-lg bg-white dark:bg-slate-950"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-[10px] uppercase font-bold text-slate-500">Residential Address</Label>
+                <Input
+                  required
+                  value={manualStudent.address}
+                  onChange={(e) => setManualStudent((p) => ({ ...p, address: e.target.value }))}
+                  placeholder="e.g. Colombo Road, Anuradhapura"
+                  className="h-8.5 text-xs rounded-lg bg-white dark:bg-slate-950"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase font-bold text-slate-500">Faculty (Group)</Label>
+                  <select
+                    required
+                    value={manualStudent.faculty}
+                    onChange={(e) => setManualStudent((p) => ({ ...p, faculty: e.target.value }))}
+                    className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-900 text-slate-800 dark:text-slate-100 text-xs px-3 py-2 rounded-lg focus:outline-none h-8.5"
+                  >
+                    <option value="">Select Faculty...</option>
+                    {facultiesList.map((f) => (
+                      <option key={f.id} value={f.name}>{f.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase font-bold text-slate-500">Degree</Label>
+                  <select
+                    required
+                    value={manualStudent.degree_id}
+                    onChange={(e) => setManualStudent((p) => ({ ...p, degree_id: e.target.value }))}
+                    className="w-full bg-white dark:bg-slate-955 border border-slate-200 dark:border-slate-900 text-slate-850 dark:text-slate-100 text-xs px-3 py-2 rounded-lg focus:outline-none h-8.5"
+                  >
+                    <option value="">Select Degree...</option>
+                    {degrees
+                      .filter((d: any) => !manualStudent.faculty || d.faculty === manualStudent.faculty)
+                      .map((d: any) => (
+                        <option key={d.id} value={d.id}>{d.code} - {d.name_en}</option>
+                      ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase font-bold text-slate-500">GPA</Label>
+                  <Input
+                    value={manualStudent.gpa}
+                    onChange={(e) => setManualStudent((p) => ({ ...p, gpa: e.target.value }))}
+                    placeholder="e.g. 3.75"
+                    className="h-8.5 text-xs rounded-lg bg-white dark:bg-slate-950"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase font-bold text-slate-500">Class</Label>
+                  <select
+                    value={manualStudent.class}
+                    onChange={(e) => setManualStudent((p) => ({ ...p, class: e.target.value }))}
+                    className="w-full bg-white dark:bg-slate-955 border border-slate-200 dark:border-slate-900 text-slate-850 dark:text-slate-100 text-xs px-3 py-2 rounded-lg focus:outline-none h-8.5"
+                  >
+                    <option value="">No Class / General Degree</option>
+                    <option value="First Class">First Class</option>
+                    <option value="Second Class (Upper Division)">Second Class (Upper Division)</option>
+                    <option value="Second Class (Lower Division)">Second Class (Lower Division)</option>
+                    <option value="Pass">Pass</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Form Actions */}
+              <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-2 shrink-0 bg-slate-50 dark:bg-slate-900/50 -mx-6 -mb-6 px-6 py-4">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setShowManualAddModal(false)}
+                  disabled={loading}
+                  className="h-9 rounded-xl text-xs font-bold px-4 border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={loading}
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs h-9 px-5 rounded-xl flex items-center gap-1.5 shadow shadow-blue-500/20"
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      Adding...
+                    </>
+                  ) : (
+                    "Add Candidate"
+                  )}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Candidate Editor Modal */}
+      {editingStudent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={() => setEditingStudent(null)}>
+          <div
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
+              <div>
+                <h2 className="text-base font-bold text-slate-900 dark:text-white">Edit Candidate Details</h2>
+                <p className="text-[11px] text-slate-500 mt-0.5">Modify database records. Edits will generate logs inside the System Audit table.</p>
+              </div>
+              <button
+                onClick={() => setEditingStudent(null)}
+                className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Modal Content - Scrollable Form */}
+            <form onSubmit={handleUpdateStudentDetails} className="flex-1 overflow-y-auto p-6 space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase font-bold text-slate-500">Registration Number</Label>
+                  <Input
+                    required
+                    value={editingStudent.registration_no || ""}
+                    onChange={(e) => setEditingStudent((p: any) => ({ ...p, registration_no: e.target.value }))}
+                    className="h-8.5 text-xs rounded-lg bg-white dark:bg-slate-950"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase font-bold text-slate-500">Index Number</Label>
+                  <Input
+                    required
+                    value={editingStudent.index_no || ""}
+                    onChange={(e) => setEditingStudent((p: any) => ({ ...p, index_no: e.target.value }))}
+                    className="h-8.5 text-xs rounded-lg bg-white dark:bg-slate-950"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase font-bold text-slate-500">NIC Number</Label>
+                  <Input
+                    required
+                    value={editingStudent.nic_no || ""}
+                    onChange={(e) => setEditingStudent((p: any) => ({ ...p, nic_no: e.target.value }))}
+                    className="h-8.5 text-xs rounded-lg bg-white dark:bg-slate-950"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase font-bold text-slate-500">Effective Date</Label>
+                  <Input
+                    type="date"
+                    required
+                    value={editingStudent.effective_date ? new Date(editingStudent.effective_date).toISOString().substring(0, 10) : ""}
+                    onChange={(e) => setEditingStudent((p: any) => ({ ...p, effective_date: e.target.value }))}
+                    className="h-8.5 text-xs rounded-lg bg-white dark:bg-slate-955 text-slate-800 dark:text-slate-100"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-[10px] uppercase font-bold text-slate-500">Name with Initials</Label>
+                <Input
+                  required
+                  value={editingStudent.name_with_initials || ""}
+                  onChange={(e) => setEditingStudent((p: any) => ({ ...p, name_with_initials: e.target.value }))}
+                  className="h-8.5 text-xs rounded-lg bg-white dark:bg-slate-950"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-[10px] uppercase font-bold text-slate-500">Full Name</Label>
+                <Input
+                  required
+                  value={editingStudent.full_name || ""}
+                  onChange={(e) => setEditingStudent((p: any) => ({ ...p, full_name: e.target.value }))}
+                  className="h-8.5 text-xs rounded-lg bg-white dark:bg-slate-950"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase font-bold text-slate-500">GPA</Label>
+                  <Input
+                    value={editingStudent.gpa || ""}
+                    onChange={(e) => setEditingStudent((p: any) => ({ ...p, gpa: e.target.value }))}
+                    className="h-8.5 text-xs rounded-lg bg-white dark:bg-slate-950"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase font-bold text-slate-500">Class</Label>
+                  <select
+                    value={editingStudent.class || ""}
+                    onChange={(e) => setEditingStudent((p: any) => ({ ...p, class: e.target.value }))}
+                    className="w-full bg-white dark:bg-slate-955 border border-slate-200 dark:border-slate-900 text-slate-850 dark:text-slate-100 text-xs px-3 py-2 rounded-lg focus:outline-none h-8.5"
+                  >
+                    <option value="">No Class / General Degree</option>
+                    <option value="First Class">First Class</option>
+                    <option value="Second Class (Upper Division)">Second Class (Upper Division)</option>
+                    <option value="Second Class (Lower Division)">Second Class (Lower Division)</option>
+                    <option value="Pass">Pass</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Form Actions */}
+              <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-2 shrink-0 bg-slate-50 dark:bg-slate-900/50 -mx-6 -mb-6 px-6 py-4">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setEditingStudent(null)}
+                  disabled={loading}
+                  className="h-9 rounded-xl text-xs font-bold px-4 border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={loading}
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs h-9 px-5 rounded-xl flex items-center gap-1.5 shadow shadow-blue-500/20"
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    "Save Changes"
+                  )}
+                </Button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 

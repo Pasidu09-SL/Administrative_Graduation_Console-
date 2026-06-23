@@ -67,6 +67,11 @@ export async function POST(req: Request) {
     // Run the SQL script to drop tables and cleanly rebuild them
     await runAsAdmin(async (client) => {
       await client.query(sqlContent);
+      await client.query(
+        `INSERT INTO audit_logs (admin_id, action_taken)
+         VALUES ($1, $2)`,
+        [session.username, 'Restored system database and storage from backup archive']
+      );
     });
 
     // 5. Step 3: Media Sync Restoration

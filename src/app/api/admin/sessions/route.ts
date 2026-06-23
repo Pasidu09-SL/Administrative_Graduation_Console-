@@ -248,7 +248,16 @@ export async function POST(req: Request) {
           FROM students s
           JOIN degrees d ON s.degree_id = d.id
           WHERE d.type = 'External' AND s.verification_status = 'Approved' AND s.convocation_year = $1
-          ORDER BY d.degree_no ASC, s.import_order ASC
+          ORDER BY d.degree_no ASC,
+                   (CASE 
+                      WHEN LOWER(s.class) LIKE '%first%' THEN 1
+                      WHEN LOWER(s.class) LIKE '%second%upper%' OR LOWER(s.class) LIKE '%upper%division%' OR LOWER(s.class) LIKE '%second%class%upper%' THEN 2
+                      WHEN LOWER(s.class) LIKE '%second%lower%' OR LOWER(s.class) LIKE '%lower%division%' OR LOWER(s.class) LIKE '%second%class%lower%' THEN 3
+                      ELSE 4
+                    END) ASC,
+                   s.is_late_addition ASC,
+                   s.gpa DESC NULLS LAST,
+                   s.import_order ASC
         `,
           [activeYear],
         );
@@ -260,7 +269,16 @@ export async function POST(req: Request) {
           FROM students s
           JOIN degrees d ON s.degree_id = d.id
           WHERE s.faculty = $1 AND (d.type = 'Internal' OR d.type IS NULL) AND s.verification_status = 'Approved' AND s.convocation_year = $2
-          ORDER BY d.degree_no ASC, s.import_order ASC
+          ORDER BY d.degree_no ASC,
+                   (CASE 
+                      WHEN LOWER(s.class) LIKE '%first%' THEN 1
+                      WHEN LOWER(s.class) LIKE '%second%upper%' OR LOWER(s.class) LIKE '%upper%division%' OR LOWER(s.class) LIKE '%second%class%upper%' THEN 2
+                      WHEN LOWER(s.class) LIKE '%second%lower%' OR LOWER(s.class) LIKE '%lower%division%' OR LOWER(s.class) LIKE '%second%class%lower%' THEN 3
+                      ELSE 4
+                    END) ASC,
+                   s.is_late_addition ASC,
+                   s.gpa DESC NULLS LAST,
+                   s.import_order ASC
         `,
           [actualFaculty, activeYear],
         );
@@ -272,7 +290,16 @@ export async function POST(req: Request) {
           FROM students s
           LEFT JOIN degrees d ON s.degree_id = d.id
           WHERE s.faculty = $1 AND s.verification_status = 'Approved' AND s.convocation_year = $2
-          ORDER BY d.degree_no ASC, s.import_order ASC
+          ORDER BY d.degree_no ASC,
+                   (CASE 
+                      WHEN LOWER(s.class) LIKE '%first%' THEN 1
+                      WHEN LOWER(s.class) LIKE '%second%upper%' OR LOWER(s.class) LIKE '%upper%division%' OR LOWER(s.class) LIKE '%second%class%upper%' THEN 2
+                      WHEN LOWER(s.class) LIKE '%second%lower%' OR LOWER(s.class) LIKE '%lower%division%' OR LOWER(s.class) LIKE '%second%class%lower%' THEN 3
+                      ELSE 4
+                    END) ASC,
+                   s.is_late_addition ASC,
+                   s.gpa DESC NULLS LAST,
+                   s.import_order ASC
         `,
           [targetGroup, activeYear],
         );
@@ -346,6 +373,14 @@ export async function POST(req: Request) {
       }
 
       const startSeatVal = parseInt(maxSeatRes.rows[0].max_seat) + 1;
+
+      // Log seating allocation progress
+      await client.query(
+        `INSERT INTO audit_logs (admin_id, action_taken)
+         VALUES ($1, $2)`,
+        [session.username, `Allocated seating for group: ${targetGroup} to Session ${sessNum} (${studentsList.length} students allocated)`]
+      );
+
       return {
         faculty: targetGroup,
         sessionNumber: sessNum,
@@ -423,6 +458,13 @@ export async function DELETE(req: Request) {
           [group, activeYear],
         );
       }
+
+      // Audit log
+      await client.query(
+        `INSERT INTO audit_logs (admin_id, action_taken)
+         VALUES ($1, $2)`,
+        [session.username, `Cleared seating and session allocation for group: ${group}`]
+      );
     });
 
     return NextResponse.json({

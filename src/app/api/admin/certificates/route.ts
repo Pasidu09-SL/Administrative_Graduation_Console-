@@ -335,15 +335,24 @@ export async function POST(req: Request) {
             throw new Error('Student record not found or not approved/allocated certificate.');
           }
 
+          const sRec = res.rows[0];
+
           const layoutRes = await client.query(
             "SELECT layout_data FROM certificate_layouts WHERE convocation_year = $1",
-            [res.rows[0].convocation_year || '2026']
+            [sRec.convocation_year || '2026']
           );
           const dbLayout = layoutRes.rows[0]?.layout_data || {};
           const mergedLayout = { ...DEFAULT_LAYOUT, ...dbLayout };
 
+          // Write audit log
+          await client.query(
+            `INSERT INTO audit_logs (admin_id, action_taken, student_id)
+             VALUES ($1, $2, $3)`,
+            [session.username, `Generated individual certificate for student: Reg No=${sRec.registration_no}, Name=${sRec.full_name}`, studentId]
+          );
+
           return {
-            student: res.rows[0],
+            student: sRec,
             layoutData: mergedLayout
           };
         });
@@ -425,6 +434,15 @@ export async function POST(req: Request) {
       );
       const dbLayout = layoutRes.rows[0]?.layout_data || {};
       const mergedLayout = { ...DEFAULT_LAYOUT, ...dbLayout };
+
+      if (res.rows.length > 0) {
+        // Write audit log
+        await client.query(
+          `INSERT INTO audit_logs (admin_id, action_taken)
+           VALUES ($1, $2)`,
+          [session.username, `Initiated bulk certificate generation for faculty='${faculty}', degree_id='${degreeId}' (${res.rows.length} candidates)`]
+        );
+      }
 
       return {
         students: res.rows,

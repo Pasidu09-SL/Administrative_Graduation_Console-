@@ -235,6 +235,7 @@ export async function runMigrations() {
         ALTER TABLE students ADD COLUMN IF NOT EXISTS confirmation_email_sent BOOLEAN DEFAULT FALSE;
         ALTER TABLE students ADD COLUMN IF NOT EXISTS import_order SERIAL;
         ALTER TABLE students ADD COLUMN IF NOT EXISTS timeline_bypass BOOLEAN DEFAULT FALSE;
+        ALTER TABLE students ADD COLUMN IF NOT EXISTS is_late_addition BOOLEAN DEFAULT FALSE;
       `);
 
       // Make index_no and gpa nullable
@@ -336,4 +337,21 @@ export async function runAsAdmin<T>(
   } finally {
     client.release();
   }
+}
+
+/**
+ * Log an administrative action to the audit logs table.
+ */
+export async function logAuditAction(
+  adminId: string,
+  action: string,
+  studentId: string | null = null
+): Promise<void> {
+  await runAsAdmin(async (client) => {
+    await client.query(
+      `INSERT INTO audit_logs (admin_id, action_taken, student_id) 
+       VALUES ($1, $2, $3)`,
+      [adminId, action, studentId]
+    );
+  });
 }

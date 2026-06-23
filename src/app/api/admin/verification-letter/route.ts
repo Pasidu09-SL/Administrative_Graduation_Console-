@@ -19,6 +19,15 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: 'Student and inputs are required.' }, { status: 400 });
     }
 
+    // Write audit log
+    await runAsAdmin(async (client) => {
+      await client.query(
+        `INSERT INTO audit_logs (admin_id, action_taken, student_id)
+         VALUES ($1, $2, $3)`,
+        [session.username, `Generated verification letter for student: Reg No=${student.registration_no}, Name=${student.name_with_initials}`, student.id]
+      );
+    });
+
     const templateDir = path.join(process.cwd(), 'public', 'templates');
     
     // Load Abhaya Libre & Pavanam font files as base64
@@ -170,12 +179,12 @@ body {
 .header-container {
   display: flex;
   align-items: center;
-  margin-top: 15mm;
+  margin-top: 10mm;
   margin-bottom: 2mm;
 }
 .logo {
-  width: 20mm;
-  height: 20mm;
+  width: 25mm;
+  height: 25mm;
   margin-right: 5mm;
   flex-shrink: 0;
 }
@@ -212,16 +221,24 @@ body {
 
 .ref-section {
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
   margin-top: 5mm;
   margin-bottom: 8mm;
   font-size: 9.5pt;
 }
-.ref-left {
+.ref-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  width: 100%;
+}
+.ref-col-left {
   width: 90mm;
 }
-.ref-right {
+.ref-col-right {
   width: 80mm;
+  display: flex;
+  justify-content: flex-end;
 }
 .ref-lang-row {
   display: flex;
@@ -332,26 +349,35 @@ body {
   left: 20mm;
   right: 20mm;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
+  height: 70px;
 }
 .footer-qr {
-  width: 55px;
-  height: 55px;
+  width: 70px;
+  height: 70px;
   margin-right: 4mm;
   flex-shrink: 0;
 }
 .footer-text {
   flex-grow: 1;
-  font-size: 7.5pt;
+  height: 70px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font-size: 9.5pt;
   color: #333;
-  line-height: 1.35;
+  line-height: 1.2;
 }
 .footer-line-1 {
   font-weight: bold;
   color: #000;
+  margin: 0;
+  padding: 0;
 }
 .footer-line-2, .footer-line-3 {
   color: #444;
+  margin: 0;
+  padding: 0;
 }
 .footer-band {
   position: absolute;
@@ -359,7 +385,6 @@ body {
   left: 0;
   right: 0;
   height: 5mm;
-  background: linear-gradient(95deg, #800000 85%, #eab308 85%);
 }
 </style>
 </head>
@@ -369,7 +394,7 @@ body {
     <img class="logo" src="${logoBase64}" />
     <div class="header-text">
       <div class="uni-si">ශ්‍රී ලංකා රජරට විශ්වවිද්‍යාලය</div>
-      <div class="uni-ta">இலங்கை රජරට பல்கலைக்கழகம்</div>
+      <div class="uni-ta">இலங்கை රජரட்ட பல்கலைக்கழகம்</div>
       <div class="uni-en">Rajarata University of Sri Lanka</div>
     </div>
   </div>
@@ -377,39 +402,47 @@ body {
   <hr class="divider-line" />
   
   <div class="ref-section">
-    <div class="ref-left">
-      <!-- Your No Block -->
-      <div class="ref-lang-row">
-        <div class="ref-lang-labels">
-          <span class="si-label">ඔබේ අංකය</span>
-          <span class="ta-label">உங்கள் எண்</span>
-          <span class="en-label">Your No.</span>
+    <div class="ref-row">
+      <div class="ref-col-left">
+        <!-- Your No Block -->
+        <div class="ref-lang-row">
+          <div class="ref-lang-labels">
+            <span class="si-label">ඔබේ අංකය</span>
+            <span class="ta-label">உங்கள் எண்</span>
+            <span class="en-label">Your No.</span>
+          </div>
+          <div class="ref-brace">}</div>
+          <div class="ref-val">${inputs.yourNumber || '................................'}</div>
         </div>
-        <div class="ref-brace">}</div>
-        <div class="ref-val">${inputs.yourNumber || '................................'}</div>
       </div>
-      <!-- Date Block -->
-      <div class="ref-lang-row" style="margin-top: 5mm;">
-        <div class="ref-lang-labels">
-          <span class="si-label">දිනය</span>
-          <span class="ta-label">திகதி</span>
-          <span class="en-label">Date</span>
+      <div class="ref-col-right">
+        <!-- My No Block -->
+        <div class="ref-lang-row">
+          <div class="ref-lang-labels">
+            <span class="si-label">මගේ අංකය</span>
+            <span class="ta-label">எனது எண்</span>
+            <span class="en-label">My No.</span>
+          </div>
+          <div class="ref-brace">}</div>
+          <div class="ref-val">${inputs.myNumber || '................................'}</div>
         </div>
-        <div class="ref-brace">}</div>
-        <div class="ref-val">${today}</div>
       </div>
     </div>
-    <div class="ref-right" style="display: flex; justify-content: flex-end;">
-      <!-- My No Block -->
-      <div class="ref-lang-row">
-        <div class="ref-lang-labels">
-          <span class="si-label">මගේ අංකය</span>
-          <span class="ta-label">எனது எண்</span>
-          <span class="en-label">My No.</span>
+    
+    <div class="ref-row" style="margin-top: 5mm;">
+      <div class="ref-col-left">
+        <!-- Date Block -->
+        <div class="ref-lang-row">
+          <div class="ref-lang-labels">
+            <span class="si-label">දිනය</span>
+            <span class="ta-label">திகதி</span>
+            <span class="en-label">Date</span>
+          </div>
+          <div class="ref-brace">}</div>
+          <div class="ref-val">${today}</div>
         </div>
-        <div class="ref-brace">}</div>
-        <div class="ref-val">${inputs.myNumber || '................................'}</div>
       </div>
+      <div class="ref-col-right"></div>
     </div>
   </div>
   
@@ -447,7 +480,18 @@ body {
       <div class="footer-line-3">+94-252266650</div>
     </div>
   </div>
-  <div class="footer-band"></div>
+  <div class="footer-band">
+    <svg width="210mm" height="5mm" viewBox="0 0 210 5" style="display: block; width: 100%; height: 100%;">
+      <!-- Yellow start block -->
+      <path d="M 0,4.5 L 5,4.5 L 5,4.0 L 0,4.0 Z" fill="#fbbf24" />
+      <!-- Thin red line -->
+      <path d="M 5,4.5 L 140,4.5 L 140,4.0 L 5,4.0 Z" fill="#800000" />
+      <!-- Yellow diagonal transition slice -->
+      <path d="M 140,4.5 L 143,4.5 L 145,1.3 L 142,1.3 Z" fill="#fbbf24" />
+      <!-- Thick red block -->
+      <path d="M 143,4.5 L 210,4.5 L 210,1.3 L 145,1.3 Z" fill="#800000" />
+    </svg>
+  </div>
 </div>
 
 <script>
@@ -457,8 +501,8 @@ body {
   // Initialize the QR Code
   new QRCode(document.getElementById("qrcode"), {
     text: "https://www.rjt.ac.lk/contacts/",
-    width: 55,
-    height: 55,
+    width: 70,
+    height: 70,
     colorDark : "#000000",
     colorLight : "#ffffff",
     correctLevel : QRCode.CorrectLevel.M

@@ -21,7 +21,13 @@ export async function GET() {
 
     // 2. Perform Database Logical Dump (only public schema)
     const sqlDump = await runAsAdmin(async (client) => {
-      return await generateLogicalDump(client);
+      const dump = await generateLogicalDump(client);
+      await client.query(
+        `INSERT INTO audit_logs (admin_id, action_taken)
+         VALUES ($1, $2)`,
+        [session.username, 'Downloaded full system backup (database SQL dump and storage assets)']
+      );
+      return dump;
     });
 
     // 3. Download physical assets from Supabase storage buckets

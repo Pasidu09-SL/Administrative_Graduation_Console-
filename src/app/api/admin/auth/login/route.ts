@@ -53,6 +53,10 @@ export async function POST(req: Request) {
       role: staffMember.role,
     });
 
+    // Log the successful login
+    const { logAuditAction } = await import('@/lib/db');
+    await logAuditAction(staffMember.username, `${staffMember.role} logged in`);
+
     const response = NextResponse.json({
       success: true,
       user: {

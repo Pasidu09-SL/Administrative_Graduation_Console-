@@ -239,6 +239,14 @@ async function runTests() {
   // Start server
   await startServer(testDbUrl);
 
+  // Obtain admin session cookie for administrative calls
+  const adminLoginRes = await fetch(`${BASE_URL}/api/admin/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: 'admin', password: 'admin123' })
+  });
+  const testAdminCookieHeader = adminLoginRes.headers.get('set-cookie') || '';
+
   try {
     // ----------------------------------------------------
     // Test 1: Unit Test (Course / Degree Zod validation)
@@ -246,7 +254,10 @@ async function runTests() {
     console.log('\n[TEST 1] Running Unit Test: Degree Zod validation...');
     const invalidDegreeRes = await fetch(`${BASE_URL}/api/degrees`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Cookie': testAdminCookieHeader
+      },
       body: JSON.stringify({
         code: 'CS',
         name_en: 'Computer Science',
@@ -270,7 +281,10 @@ async function runTests() {
     // Add valid internal degree
     const addDegreeRes1 = await fetch(`${BASE_URL}/api/degrees`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Cookie': testAdminCookieHeader
+      },
       body: JSON.stringify({
         code: 'BSc-CS',
         faculty: 'Faculty of Applied Sciences',
@@ -286,7 +300,10 @@ async function runTests() {
     // Add valid external degree
     const addDegreeRes2 = await fetch(`${BASE_URL}/api/degrees`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Cookie': testAdminCookieHeader
+      },
       body: JSON.stringify({
         code: 'BIT',
         faculty: 'Faculty of Social Sciences & Humanities',
@@ -390,7 +407,10 @@ async function runTests() {
 
     const perfRes = await fetch(`${BASE_URL}/api/ingestion/commit`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Cookie': testAdminCookieHeader
+      },
       body: JSON.stringify({ rows: mockStudents })
     });
 
@@ -410,14 +430,6 @@ async function runTests() {
     // ----------------------------------------------------
     console.log('\n[TEST 5] Running Timeline Boundary Test...');
     
-    // Obtain admin session cookie for Test 5 administrative calls
-    const adminLoginRes = await fetch(`${BASE_URL}/api/admin/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: 'admin', password: 'admin123' })
-    });
-    const testAdminCookieHeader = adminLoginRes.headers.get('set-cookie') || '';
-
     // Close the timeline window (set open to 2 days ago, close to 1 day ago)
     const closeTimelineRes = await fetch(`${BASE_URL}/api/timeline`, {
       method: 'POST',
@@ -1222,7 +1234,10 @@ async function runTests() {
     // Re-import student 19 via ingestion commit
     const reIngestRes = await fetch(`${BASE_URL}/api/ingestion/commit`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Cookie': adminCookieHeader
+      },
       body: JSON.stringify({
         rows: [{
           name_with_initials: 'Student N.',
@@ -1283,7 +1298,10 @@ async function runTests() {
     
     const ingest2027Res = await fetch(`${BASE_URL}/api/ingestion/commit`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Cookie': adminCookieHeader
+      },
       body: JSON.stringify({
         rows: [{
           name_with_initials: 'Student One 2027',

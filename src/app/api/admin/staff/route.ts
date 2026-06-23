@@ -59,7 +59,13 @@ export async function POST(req: Request) {
          RETURNING id, username, name, role, status, created_at`,
         [username.trim().toLowerCase(), passwordHash, name.trim(), role]
       );
-      return res.rows[0];
+      const newStaff = res.rows[0];
+      await client.query(
+        `INSERT INTO audit_logs (admin_id, action_taken)
+         VALUES ($1, $2)`,
+        [session.username, `Created new staff account: username='${username.trim().toLowerCase()}', name='${name.trim()}', role='${role}'`]
+      );
+      return newStaff;
     });
 
     return NextResponse.json({ success: true, data });
@@ -104,7 +110,13 @@ export async function PATCH(req: Request) {
         'UPDATE staff SET status = $1 WHERE id = $2 RETURNING id, username, name, role, status, created_at',
         [status, id]
       );
-      return res.rows[0];
+      const updatedStaff = res.rows[0];
+      await client.query(
+        `INSERT INTO audit_logs (admin_id, action_taken)
+         VALUES ($1, $2)`,
+        [session.username, `Toggled staff status for username='${userUsername}' to '${status}'`]
+      );
+      return updatedStaff;
     });
 
     return NextResponse.json({ success: true, data });
@@ -143,6 +155,11 @@ export async function DELETE(req: Request) {
       }
 
       await client.query('DELETE FROM staff WHERE id = $1', [id]);
+      await client.query(
+        `INSERT INTO audit_logs (admin_id, action_taken)
+         VALUES ($1, $2)`,
+        [session.username, `Deleted staff account: username='${userUsername}'`]
+      );
     });
 
     return NextResponse.json({ success: true, message: 'Staff account deleted successfully.' });
