@@ -2,6 +2,7 @@ const { parentPort, workerData } = require('worker_threads');
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
+const { PDFDocument } = require('pdf-lib');
 
 const DEFAULT_CERT_LINES = {
   internalFront: [
@@ -279,8 +280,28 @@ async function generate() {
     const fontSiBase64 = fontSiBytes.toString('base64');
     const fontTaBase64 = fontTaBytes.toString('base64');
 
-    // Build the master HTML content for all pages
-    let htmlContent = `
+    const masterDoc = await PDFDocument.create();
+
+    const browser = await puppeteer.launch({
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu'
+      ]
+    });
+
+    const page = await browser.newPage();
+    const batchSize = 50;
+    let processedCount = 0;
+
+    for (let i = 0; i < students.length; i += batchSize) {
+      const batch = students.slice(i, i + batchSize);
+
+      // Build the HTML content for this batch
+      let htmlContent = `
 <!DOCTYPE html>
 <html>
 <head>
@@ -335,7 +356,7 @@ body {
   left: 20pt;
   right: 20pt;
   bottom: 20pt;
-  border: 1.5pt solid #262626;
+  border: none;
   box-sizing: border-box;
 }
 .inner-border {
@@ -344,7 +365,7 @@ body {
   left: 23pt;
   right: 23pt;
   bottom: 23pt;
-  border: 0.5pt solid #262626;
+  border: none;
   box-sizing: border-box;
 }
 .line {
@@ -365,36 +386,28 @@ body {
 <body>
 `;
 
-    let processedCount = 0;
+      for (const student of batch) {
+        const isInternal = student.degree_type === 'Internal';
 
-    for (const student of students) {
-      const isInternal = student.degree_type === 'Internal';
+        // 1. Render front page
+        const frontLines = getStudentCertLines(layoutData, isInternal, 'front');
+        htmlContent += `<div class="page">`;
+        htmlContent += `  <div class="outer-border"></div>`;
+        htmlContent += `  <div class="inner-border"></div>`;
+        htmlContent += renderHtmlLines(frontLines, student, layoutData, 'front');
+        htmlContent += `</div>`;
 
-      // 1. Render front page
-      const frontLines = getStudentCertLines(layoutData, isInternal, 'front');
-      htmlContent += `<div class="page">`;
-      htmlContent += `  <div class="outer-border"></div>`;
-      htmlContent += `  <div class="inner-border"></div>`;
-      htmlContent += renderHtmlLines(frontLines, student, layoutData, 'front');
-      htmlContent += `</div>`;
-
-      // 2. Render back page
-      const backLines = getStudentCertLines(layoutData, isInternal, 'back');
-      htmlContent += `<div class="page">`;
-      htmlContent += `  <div class="outer-border"></div>`;
-      htmlContent += `  <div class="inner-border"></div>`;
-      htmlContent += renderHtmlLines(backLines, student, layoutData, 'back');
-      htmlContent += `</div>`;
-
-      processedCount++;
-      // Post progress updates during parsing
-      if (parentPort) {
-        parentPort.postMessage({ type: 'progress', current: Math.round(processedCount * 0.5), total: students.length });
+        // 2. Render back page
+        const backLines = getStudentCertLines(layoutData, isInternal, 'back');
+        htmlContent += `<div class="page">`;
+        htmlContent += `  <div class="outer-border"></div>`;
+        htmlContent += `  <div class="inner-border"></div>`;
+        htmlContent += renderHtmlLines(backLines, student, layoutData, 'back');
+        htmlContent += `</div>`;
       }
-    }
 
-    // Add barcode drawing script
-    htmlContent += `
+      // Add barcode drawing script
+      htmlContent += `
 <script>
 function drawBarcode128(canvasId, text, barHeight, scale) {
   const canvas = document.getElementById(canvasId);
@@ -552,36 +565,38 @@ document.querySelectorAll('.cert-degree-name').forEach(el => {
 </html>
 `;
 
-    // Launch headless Chromium via Puppeteer to generate final PDF
-    const browser = await puppeteer.launch({
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
+      await page.setContent(htmlContent, { waitUntil: 'domcontentloaded' });
 
-    const page = await browser.newPage();
-    await page.setContent(htmlContent, { waitUntil: 'networkidle0' });
+      const pdfBuffer = await page.pdf({
+        width: '8.2677in',
+        height: '11.6929in',
+        margin: {
+          top: '0px',
+          bottom: '0px',
+          left: '0px',
+          right: '0px'
+        },
+        printBackground: true
+      });
 
-    // Print to PDF
-    const pdfBuffer = await page.pdf({
-      width: '8.2677in',
-      height: '11.6929in',
-      margin: {
-        top: '0px',
-        bottom: '0px',
-        left: '0px',
-        right: '0px'
-      },
-      printBackground: true
-    });
+      const batchDoc = await PDFDocument.load(pdfBuffer);
+      const copiedPages = await masterDoc.copyPages(batchDoc, batchDoc.getPageIndices());
+      copiedPages.forEach((p) => masterDoc.addPage(p));
+
+      processedCount += batch.length;
+      if (parentPort) {
+        parentPort.postMessage({ type: 'progress', current: processedCount, total: students.length });
+      }
+
+      await page.goto('about:blank');
+    }
 
     await browser.close();
 
-    // Save final PDF
-    fs.writeFileSync(outputPath, pdfBuffer);
+    const masterPdfBytes = await masterDoc.save();
+    fs.writeFileSync(outputPath, masterPdfBytes);
 
     if (parentPort) {
-      parentPort.postMessage({ type: 'progress', current: students.length, total: students.length });
       parentPort.postMessage({ type: 'done', outputPath, count: students.length });
     }
   } catch (err) {

@@ -380,7 +380,7 @@ body {
   left: 20pt;
   right: 20pt;
   bottom: 20pt;
-  border: 1.5pt solid #262626;
+  border: none;
   box-sizing: border-box;
 }
 .inner-border {
@@ -389,7 +389,7 @@ body {
   left: 23pt;
   right: 23pt;
   bottom: 23pt;
-  border: 0.5pt solid #262626;
+  border: none;
   box-sizing: border-box;
 }
 .sig-line {
@@ -591,7 +591,7 @@ document.querySelectorAll('.cert-degree-name').forEach(el => {
     });
 
     const page = await browser.newPage();
-    await page.setContent(htmlContent, { waitUntil: 'networkidle0' as any });
+    await page.setContent(htmlContent, { waitUntil: 'domcontentloaded' as any });
     
 
     const pdfBuffer = await page.pdf({

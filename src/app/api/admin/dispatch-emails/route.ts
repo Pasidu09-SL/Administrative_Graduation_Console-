@@ -23,7 +23,9 @@ export async function POST(req: Request) {
 
     const host = req.headers.get('x-forwarded-host') || req.headers.get('host') || 'graduation-portal.duzb.me';
     const proto = req.headers.get('x-forwarded-proto') || 'https';
-    const origin = process.env.APP_URL || `${proto}://${host}`;
+    const origin = process.env.NODE_ENV === 'production' 
+  ? 'https://graduation-portal.duzb.me' 
+  : (req.headers.get('x-forwarded-proto') + '://' + req.headers.get('host') || 'http://localhost:3000');
     const results = await runAsAdmin(async (client) => {
       // 1. Fetch the custom email template from DB
       const tempRes = await client.query(

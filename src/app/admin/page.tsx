@@ -184,59 +184,72 @@ export default function AdminDashboard() {
 
   // Verification Letter Modal States
   const [verLetterStudent, setVerLetterStudent] = useState<any | null>(null);
-  const [verLetterStep, setVerLetterStep] = useState<"form" | "preview">("form");
   const [verLetterGenerating, setVerLetterGenerating] = useState(false);
-  const [showVerLetterPreviewModal, setShowVerLetterPreviewModal] = useState(false);
   const [verLetterInputs, setVerLetterInputs] = useState({
     yourNumber: "",
-    ourRef: "",
     myNumber: "",
-    fileNumber: "",
     refLetterDate: "",
     addressee: "",
     staffName: "",
+    staffDesignation: "Deputy Registrar",
   });
-  const [verLetterPdfBlob, setVerLetterPdfBlob] = useState<Blob | null>(null);
-  const [verLetterPreviewUrl, setVerLetterPreviewUrl] = useState<string | null>(null);
 
-  // Cleanup preview state when the student letter modal is closed
-  useEffect(() => {
-    if (!verLetterStudent) {
-      setVerLetterPdfBlob(null);
-      setShowVerLetterPreviewModal(false);
-    }
-  }, [verLetterStudent]);
+  const [certGeneratingId, setCertGeneratingId] = useState<string | null>(null);
 
-  // Manage object URL lifecycle for verification letter PDF preview
-  useEffect(() => {
-    let url: string | null = null;
-    if (verLetterPdfBlob) {
-      url = URL.createObjectURL(verLetterPdfBlob);
-      setVerLetterPreviewUrl(url);
-    } else {
-      setVerLetterPreviewUrl(null);
-    }
-    return () => {
-      if (url) {
-        try {
-          URL.revokeObjectURL(url);
-        } catch (e) {
-          console.error("Failed to revoke URL:", e);
-        }
+  const handleGenerateIndividualCertificate = async (student: any) => {
+    setCertGeneratingId(student.id);
+    try {
+      const response = await fetch("/api/admin/certificates", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ studentId: student.id }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to generate certificate");
       }
-      setVerLetterPreviewUrl(null);
-    };
-  }, [verLetterPdfBlob]);
 
-  const handlePreviewVerificationLetter = async () => {
+      const blob = await response.blob();
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const dataUrl = reader.result as string;
+        const a = document.createElement("a");
+        a.href = dataUrl;
+        a.download = `Certificate_${student.registration_no || student.index_no}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      };
+      reader.readAsDataURL(blob);
+    } catch (err: any) {
+      console.error("Individual certificate generation failed:", err);
+      alert(err.message || "Failed to generate certificate");
+    } finally {
+      setCertGeneratingId(null);
+    }
+  };
+
+  const handleDownloadVerificationLetter = async () => {
     if (!verLetterStudent) return;
     setVerLetterGenerating(true);
     try {
       const blob = await generateVerificationLetterPDF(verLetterStudent, verLetterInputs);
-      setVerLetterPdfBlob(blob);
-      setShowVerLetterPreviewModal(true);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const dataUrl = reader.result as string;
+        const a = document.createElement("a");
+        a.href = dataUrl;
+        a.download = `Verification_Letter_${verLetterStudent.registration_no || verLetterStudent.index_no}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      };
+      reader.readAsDataURL(blob);
     } catch (err) {
-      console.error("Verification letter preview generation failed:", err);
+      console.error("Verification letter download failed:", err);
     } finally {
       setVerLetterGenerating(false);
     }
@@ -1262,6 +1275,70 @@ const handleDownloadMockCertificate = async () => {
       document.body.removeChild(a);
     };
     reader.readAsDataURL(blob);
+  };
+
+  const generateGraduationListExcel = () => {
+    const allStudents = filteredRegistryStudents;
+    if (allStudents.length === 0) return;
+
+    // Build worksheet data
+    const data = allStudents.map((st) => {
+      const matchedSession = convocationSessions.find(
+        (s) => Number(s.session_number) === Number(st.session_number)
+      );
+      
+      const convocationDate = matchedSession?.session_date
+        ? formatSessionDate(matchedSession.session_date)
+        : (st.graduation_date ? formatSessionDate(st.graduation_date) : "-");
+
+      return {
+        "Registration No": st.registration_no || "-",
+        "Index No": st.index_no || "-",
+        "NIC No": st.nic_no || "-",
+        "Full Name": st.full_name || "-",
+        "Name with Initials": st.name_with_initials || "-",
+        "Faculty": st.faculty || "-",
+        "Degree Code": st.degree_code || "-",
+        "Degree Name": st.degree_name_en || "-",
+        "GPA": st.gpa ? Number(st.gpa).toFixed(2) : "-",
+        "Class": st.class || "-",
+        "Effective Date": st.effective_date ? new Date(st.effective_date).toLocaleDateString("en-GB") : "-",
+        "Contact No": st.contact_no || "-",
+        "Email": st.email || "-",
+        "Address": st.address || "-",
+        "Attendance Status": st.attending_convocation ? "Attending" : "In Absentia",
+        "Convocation Date": convocationDate,
+        "Session": st.session_number !== null ? `Session ${st.session_number}` : "-",
+        "Seat No": st.seat_number !== null ? st.seat_number : "-",
+        "Certificate No": st.certificate_number || "-",
+      };
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Graduation Registry");
+
+    // Auto-fit column widths
+    const maxLens = Object.keys(data[0] || {}).reduce((acc: any, key) => {
+      acc[key] = key.length;
+      return acc;
+    }, {});
+
+    data.forEach((row: any) => {
+      Object.keys(row).forEach((key) => {
+        const valStr = String(row[key]);
+        if (valStr.length > maxLens[key]) {
+          maxLens[key] = valStr.length;
+        }
+      });
+    });
+
+    worksheet["!cols"] = Object.keys(maxLens).map((key) => ({
+      wch: Math.min(Math.max(maxLens[key] + 3, 10), 50),
+    }));
+
+    const fileYear = registryYear || activeConvocationYear;
+    XLSX.writeFile(workbook, `Graduation_List_${fileYear}.xlsx`);
   };
 
 // ─── DOCUMENT 2: Verification Letter PDF ────────────────────────────────
@@ -6950,14 +7027,24 @@ const generateVerificationLetterPDF = async (
                       selected graduation cohort.
                     </CardDescription>
                   </div>
-                  <Button
-                    onClick={generateGraduationListDocx}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold h-9 px-4 rounded-xl flex items-center gap-2 shadow shadow-emerald-500/20 shrink-0"
-                    disabled={filteredRegistryStudents.length === 0}
-                  >
-                    <Download className="h-4 w-4" />
-                    Download Graduation List
-                  </Button>
+                  <div className="flex gap-2 shrink-0">
+                    <Button
+                      onClick={generateGraduationListDocx}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold h-9 px-4 rounded-xl flex items-center gap-2 shadow shadow-emerald-500/20 shrink-0"
+                      disabled={filteredRegistryStudents.length === 0}
+                    >
+                      <Download className="h-4 w-4" />
+                      Download Graduation List
+                    </Button>
+                    <Button
+                      onClick={generateGraduationListExcel}
+                      className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold h-9 px-4 rounded-xl flex items-center gap-2 shadow shadow-blue-500/20 shrink-0"
+                      disabled={filteredRegistryStudents.length === 0}
+                    >
+                      <Download className="h-4 w-4" />
+                      Export to Excel
+                    </Button>
+                  </div>
                 </CardHeader>
                 <CardContent className="space-y-6">
                   {/* Registry Filters */}
@@ -7275,21 +7362,46 @@ const generateVerificationLetterPDF = async (
                                   </span>
                                 )}
                               </TableCell>
-                               {/* Generate Letter Action */}
+                               {/* Actions */}
                                <TableCell className="px-4 py-2.5 text-center">
-                                 <Button
-                                   size="xs"
-                                   onClick={() => {
-                                     setVerLetterStudent(st);
-                                     setVerLetterStep("form");
-                                     setVerLetterPdfBlob(null);
-                                     setVerLetterInputs({ yourNumber: "", ourRef: "", myNumber: "", fileNumber: "", refLetterDate: "", addressee: "", staffName: "" });
-                                   }}
-                                   className="h-7 text-[10px] px-2.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white font-bold flex items-center gap-1 shadow shadow-violet-500/20 mx-auto"
-                                 >
-                                   <FileText className="h-3.5 w-3.5" />
-                                   Generate Letter
-                                 </Button>
+                                 <div className="flex items-center justify-center gap-1.5">
+                                   <Button
+                                     size="xs"
+                                     onClick={() => {
+                                       setVerLetterStudent(st);
+                                       setVerLetterInputs({
+                                         yourNumber: "",
+                                         myNumber: "",
+                                         refLetterDate: "",
+                                         addressee: "",
+                                         staffName: "",
+                                         staffDesignation: "Deputy Registrar",
+                                       });
+                                     }}
+                                     className="h-7 text-[10px] px-2.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white font-bold flex items-center gap-1 shadow shadow-violet-500/20"
+                                   >
+                                     <FileText className="h-3.5 w-3.5" />
+                                     Verification Letter
+                                   </Button>
+                                   <Button
+                                     size="xs"
+                                     onClick={() => handleGenerateIndividualCertificate(st)}
+                                     disabled={certGeneratingId !== null}
+                                     className="h-7 text-[10px] px-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center gap-1 shadow shadow-emerald-500/20"
+                                   >
+                                     {certGeneratingId === st.id ? (
+                                       <>
+                                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                         Generating...
+                                       </>
+                                     ) : (
+                                       <>
+                                         <GraduationCap className="h-3.5 w-3.5" />
+                                         Certificate
+                                       </>
+                                     )}
+                                   </Button>
+                                 </div>
                                </TableCell>
                             </TableRow>
                           ))
@@ -7336,29 +7448,11 @@ const generateVerificationLetterPDF = async (
                       />
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-[10px] uppercase font-bold text-slate-500">Our Ref</Label>
-                      <Input
-                        value={verLetterInputs.ourRef}
-                        onChange={(e) => setVerLetterInputs((p) => ({ ...p, ourRef: e.target.value }))}
-                        placeholder="e.g. REG/VER/2024"
-                        className="h-8 text-xs rounded-lg bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900"
-                      />
-                    </div>
-                    <div className="space-y-1">
                       <Label className="text-[10px] uppercase font-bold text-slate-500">My Number</Label>
                       <Input
                         value={verLetterInputs.myNumber}
                         onChange={(e) => setVerLetterInputs((p) => ({ ...p, myNumber: e.target.value }))}
                         placeholder="Your reference number"
-                        className="h-8 text-xs rounded-lg bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-[10px] uppercase font-bold text-slate-500">File Number</Label>
-                      <Input
-                        value={verLetterInputs.fileNumber}
-                        onChange={(e) => setVerLetterInputs((p) => ({ ...p, fileNumber: e.target.value }))}
-                        placeholder="e.g. FILE/2024/001"
                         className="h-8 text-xs rounded-lg bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900"
                       />
                     </div>
@@ -7385,14 +7479,25 @@ const generateVerificationLetterPDF = async (
                     />
                   </div>
 
-                  <div className="space-y-1">
-                    <Label className="text-[10px] uppercase font-bold text-slate-500">Staff Member Name (Deputy Registrar)</Label>
-                    <Input
-                      value={verLetterInputs.staffName}
-                      onChange={(e) => setVerLetterInputs((p) => ({ ...p, staffName: e.target.value }))}
-                      placeholder="e.g. W.M.P. Wickramasinghe"
-                      className="h-8 text-xs rounded-lg bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900"
-                    />
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label className="text-[10px] uppercase font-bold text-slate-500">Staff Member Name</Label>
+                      <Input
+                        value={verLetterInputs.staffName}
+                        onChange={(e) => setVerLetterInputs((p) => ({ ...p, staffName: e.target.value }))}
+                        placeholder="e.g. W.M.P. Wickramasinghe"
+                        className="h-8 text-xs rounded-lg bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px] uppercase font-bold text-slate-500">Staff Member Designation</Label>
+                      <Input
+                        value={verLetterInputs.staffDesignation}
+                        onChange={(e) => setVerLetterInputs((p) => ({ ...p, staffDesignation: e.target.value }))}
+                        placeholder="e.g. Deputy Registrar"
+                        className="h-8 text-xs rounded-lg bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-900"
+                      />
+                    </div>
                   </div>
 
                   {/* Student Data Preview */}
@@ -7427,101 +7532,21 @@ const generateVerificationLetterPDF = async (
                     Cancel
                   </Button>
                   <Button
-                    onClick={handlePreviewVerificationLetter}
+                    onClick={handleDownloadVerificationLetter}
                     disabled={verLetterGenerating}
                     className="bg-violet-600 hover:bg-violet-700 text-white font-bold text-xs h-9 px-5 rounded-xl flex items-center gap-1.5 shadow shadow-violet-500/20 disabled:opacity-70"
                   >
                     {verLetterGenerating ? (
                       <>
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        Generating Preview...
+                        Downloading...
                       </>
                     ) : (
                       <>
-                        <Eye className="h-3.5 w-3.5" />
-                        Preview Letter
+                        <Download className="h-3.5 w-3.5" />
+                        Download Letter
                       </>
                     )}
-                  </Button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ── VERIFICATION LETTER PREVIEW MODAL ── */}
-          {showVerLetterPreviewModal && verLetterStudent && (
-            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-xs p-4" onClick={() => setShowVerLetterPreviewModal(false)}>
-              <div
-                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl w-full max-w-4xl h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
-                onClick={(e) => e.stopPropagation()}
-              >
-                {/* Preview Header */}
-                <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
-                  <div>
-                    <h2 className="text-base font-bold text-slate-900 dark:text-white">Letter Preview</h2>
-                    <p className="text-[11px] text-slate-500 mt-0.5">
-                      Verify layout and text formatting for {verLetterStudent.registration_no || verLetterStudent.index_no}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => setShowVerLetterPreviewModal(false)}
-                    className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition"
-                  >
-                    <X className="h-5 w-5" />
-                  </button>
-                </div>
-
-                {/* Preview Body */}
-                <div className="flex-1 bg-slate-100 dark:bg-slate-950 relative flex flex-col">
-                  {verLetterPreviewUrl ? (
-                    <object
-                      data={verLetterPreviewUrl}
-                      type="application/pdf"
-                      className="w-full h-full border-none flex-1"
-                    >
-                      <iframe
-                        src={verLetterPreviewUrl}
-                        className="w-full h-full border-none"
-                        title="Verification Letter Preview"
-                      />
-                    </object>
-                  ) : (
-                    <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
-                      <Loader2 className="h-8 w-8 animate-spin text-violet-600 mb-2" />
-                      <p className="text-xs text-slate-400 dark:text-slate-600">Loading document preview...</p>
-                    </div>
-                  )}
-                </div>
-
-                {/* Preview Footer */}
-                <div className="px-6 py-4 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-2 shrink-0 bg-slate-50 dark:bg-slate-900/50">
-                  <Button
-                    variant="outline"
-                    onClick={() => setShowVerLetterPreviewModal(false)}
-                    className="h-9 rounded-xl text-xs font-bold px-4 border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800"
-                  >
-                    Close Preview
-                  </Button>
-                  <Button
-                    onClick={() => {
-                      if (!verLetterPdfBlob) return;
-                      const reader = new FileReader();
-                      reader.onloadend = () => {
-                        const dataUrl = reader.result as string;
-                        const a = document.createElement("a");
-                        a.href = dataUrl;
-                        a.download = `Verification_Letter_${verLetterStudent.registration_no || verLetterStudent.index_no}.pdf`;
-                        document.body.appendChild(a);
-                        a.click();
-                        document.body.removeChild(a);
-                      };
-                      reader.readAsDataURL(verLetterPdfBlob);
-                    }}
-                    disabled={!verLetterPreviewUrl}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-9 px-5 rounded-xl flex items-center gap-1.5 shadow shadow-emerald-500/20 disabled:opacity-50"
-                  >
-                    <Download className="h-3.5 w-3.5" />
-                    Download PDF
                   </Button>
                 </div>
               </div>

@@ -312,10 +312,85 @@ export async function POST(req: Request) {
     }
 
     const body = await req.json().catch(() => ({}));
-    const { faculty, degreeId } = body;
+    const { faculty, degreeId, studentId } = body;
 
-    if (!faculty || !degreeId) {
-      return NextResponse.json({ success: false, error: 'Faculty and Degree selection are required.' }, { status: 400 });
+    if (!studentId && (!faculty || !degreeId)) {
+      return NextResponse.json({ success: false, error: 'Faculty and Degree selection or Student ID is required.' }, { status: 400 });
+    }
+
+    if (studentId) {
+      // Ensure templates are generated and cached
+      await ensureTemplates();
+
+      try {
+        const { student, layoutData } = await runAsAdmin(async (client) => {
+          const res = await client.query(`
+            SELECT s.id, s.full_name, s.index_no, s.certificate_number, s.registration_no, s.faculty, s.degree_id, s.convocation_year, d.name_en as degree_name_en, d.name_si as degree_name_si, d.name_ta as degree_name_ta, d.type as degree_type
+            FROM students s
+            JOIN degrees d ON s.degree_id = d.id
+            WHERE s.id = $1 AND s.verification_status = 'Approved' AND s.certificate_number IS NOT NULL
+          `, [studentId]);
+          
+          if (res.rows.length === 0) {
+            throw new Error('Student record not found or not approved/allocated certificate.');
+          }
+
+          const layoutRes = await client.query(
+            "SELECT layout_data FROM certificate_layouts WHERE convocation_year = $1",
+            [res.rows[0].convocation_year || '2026']
+          );
+          const dbLayout = layoutRes.rows[0]?.layout_data || {};
+          const mergedLayout = { ...DEFAULT_LAYOUT, ...dbLayout };
+
+          return {
+            student: res.rows[0],
+            layoutData: mergedLayout
+          };
+        });
+
+        const outputDir = path.join(process.cwd(), 'public', 'certificates');
+        if (!fs.existsSync(outputDir)) {
+          fs.mkdirSync(outputDir, { recursive: true });
+        }
+        const outputPath = path.join(outputDir, `individual_${studentId}_${Date.now()}.pdf`);
+
+        // Spawn the Node Worker Thread synchronously
+        const workerPath = path.join(process.cwd(), 'src', 'lib', 'pdf-worker.js');
+        const fileBytes = await new Promise<Buffer>((resolve, reject) => {
+          const worker = new Worker(workerPath, {
+            workerData: {
+              students: [student],
+              outputPath,
+              templateDir: path.join(process.cwd(), 'public', 'templates'),
+              layoutData
+            }
+          });
+          worker.on('message', (msg) => {
+            if (msg.type === 'done') {
+              try {
+                const bytes = fs.readFileSync(msg.outputPath);
+                fs.unlinkSync(msg.outputPath); // clean up
+                resolve(bytes);
+              } catch (err) {
+                reject(err);
+              }
+            } else if (msg.type === 'error') {
+              reject(new Error(msg.error));
+            }
+          });
+          worker.on('error', reject);
+        });
+
+        return new Response(new Uint8Array(fileBytes), {
+          headers: {
+            'Content-Type': 'application/pdf',
+            'Content-Length': String(fileBytes.length),
+            'Content-Disposition': `attachment; filename="Certificate_${student.registration_no || student.index_no}.pdf"`,
+          },
+        });
+      } catch (err: any) {
+        return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+      }
     }
 
     if (global.certTaskStatus?.status === 'processing') {

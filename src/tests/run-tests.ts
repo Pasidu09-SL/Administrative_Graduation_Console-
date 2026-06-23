@@ -725,7 +725,7 @@ async function runTests() {
     });
     const allocation2 = (await assignFac2.json()).data;
 
-    // Check that the non-attending student got NULL seat, session 1, and certificate
+    // Check that the non-attending student got NULL seat, NULL session, and certificate
     const nonAttendingCheck = await pool.query(
       "SELECT seat_number, session_number, certificate_number FROM students WHERE id = $1",
       [nonAttendingId]
@@ -735,8 +735,8 @@ async function runTests() {
     if (naRecord.seat_number !== null) {
       throw new Error(`Expected non-attending student to have NULL seat, got: ${naRecord.seat_number}`);
     }
-    if (naRecord.session_number !== 1) {
-      throw new Error(`Expected non-attending student to have session 1, got: ${naRecord.session_number}`);
+    if (naRecord.session_number !== null) {
+      throw new Error(`Expected non-attending student to have NULL session, got: ${naRecord.session_number}`);
     }
     if (!naRecord.certificate_number) {
       throw new Error('Expected non-attending student to have a certificate number');

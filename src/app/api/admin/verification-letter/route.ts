@@ -35,6 +35,12 @@ export async function POST(req: Request) {
       fontTaBase64 = fs.readFileSync(fontTaPath).toString('base64');
     }
 
+    const qrJsPath = path.join(templateDir, 'qrcode.min.js');
+    let qrJsContent = '';
+    if (fs.existsSync(qrJsPath)) {
+      qrJsContent = fs.readFileSync(qrJsPath, 'utf8');
+    }
+
     // Load University Logo
     const logoPath = path.join(templateDir, 'RUSL.png');
     let logoBase64 = '';
@@ -163,85 +169,97 @@ body {
 
 .header-container {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
+  align-items: center;
   margin-top: 15mm;
   margin-bottom: 2mm;
-}
-.header-left {
-  text-align: left;
-  width: 70mm;
-}
-.header-center {
-  text-align: center;
-  width: 30mm;
-}
-.header-right {
-  text-align: right;
-  width: 70mm;
 }
 .logo {
   width: 20mm;
   height: 20mm;
-  display: block;
-  margin: 0 auto;
+  margin-right: 5mm;
+  flex-shrink: 0;
 }
-.uni-si, .loc-si {
+.header-text {
+  display: flex;
+  flex-direction: column;
+  color: #800000;
+  text-align: left;
+}
+.uni-si {
   font-family: 'Abhaya Libre', serif;
-  font-size: 11.5pt;
+  font-size: 15pt;
   font-weight: bold;
-  line-height: 1.25;
+  line-height: 1.2;
 }
-.uni-ta, .loc-ta {
+.uni-ta {
   font-family: 'Pavanam', sans-serif;
-  font-size: 10pt;
+  font-size: 12pt;
   font-weight: bold;
   line-height: 1.25;
 }
 .uni-en {
-  font-size: 8.5pt;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 13pt;
   font-weight: bold;
-  margin-top: 4pt;
-}
-.loc-en {
-  font-size: 8.5pt;
-  margin-top: 4pt;
+  line-height: 1.2;
 }
 
 .divider-line {
   border: none;
-  border-top: 0.4mm solid #000;
+  border-top: 0.8mm solid #800000;
   margin: 2mm 0;
-}
-.contact-info {
-  font-size: 7.5pt;
-  text-align: center;
-  margin: 1mm 0;
 }
 
 .ref-section {
   display: flex;
   justify-content: space-between;
-  margin-top: 7mm;
-  margin-bottom: 9mm;
+  margin-top: 5mm;
+  margin-bottom: 8mm;
   font-size: 9.5pt;
 }
 .ref-left {
-  width: 80mm;
+  width: 90mm;
 }
 .ref-right {
   width: 80mm;
 }
-.ref-row {
+.ref-lang-row {
   display: flex;
-  margin-bottom: 1.5mm;
+  align-items: center;
 }
-.ref-label {
+.ref-lang-labels {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  line-height: 1.25;
+  width: 20mm;
+  flex-shrink: 0;
+}
+.ref-lang-labels .si-label {
+  font-family: 'Abhaya Libre', serif;
+  font-size: 8.5pt;
   font-weight: bold;
-  width: 28mm;
 }
-.ref-value {
-  width: 52mm;
+.ref-lang-labels .ta-label {
+  font-family: 'Pavanam', sans-serif;
+  font-size: 8pt;
+  font-weight: bold;
+}
+.ref-lang-labels .en-label {
+  font-size: 8pt;
+  font-weight: bold;
+}
+.ref-brace {
+  font-size: 24pt;
+  font-weight: 300;
+  font-family: 'Courier New', monospace;
+  margin: 0 6px;
+  line-height: 1;
+  color: #333;
+}
+.ref-val {
+  font-size: 9.5pt;
+  flex-grow: 1;
 }
 
 .addressee-section {
@@ -307,55 +325,90 @@ body {
 .signature-title {
   font-weight: bold;
 }
+
+.footer-container {
+  position: absolute;
+  bottom: 12mm;
+  left: 20mm;
+  right: 20mm;
+  display: flex;
+  align-items: center;
+}
+.footer-qr {
+  width: 55px;
+  height: 55px;
+  margin-right: 4mm;
+  flex-shrink: 0;
+}
+.footer-text {
+  flex-grow: 1;
+  font-size: 7.5pt;
+  color: #333;
+  line-height: 1.35;
+}
+.footer-line-1 {
+  font-weight: bold;
+  color: #000;
+}
+.footer-line-2, .footer-line-3 {
+  color: #444;
+}
+.footer-band {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 5mm;
+  background: linear-gradient(95deg, #800000 85%, #eab308 85%);
+}
 </style>
 </head>
 <body>
 <div class="letter-page">
   <div class="header-container">
-    <div class="header-left">
+    <img class="logo" src="${logoBase64}" />
+    <div class="header-text">
       <div class="uni-si">ශ්‍රී ලංකා රජරට විශ්වවිද්‍යාලය</div>
-      <div class="uni-ta">இலங்கை ரஜராஜ பல்கலைக்கழகம்</div>
+      <div class="uni-ta">இலங்கை රජරට பல்கலைக்கழகம்</div>
       <div class="uni-en">Rajarata University of Sri Lanka</div>
-    </div>
-    <div class="header-center">
-      <img class="logo" src="${logoBase64}" />
-    </div>
-    <div class="header-right">
-      <div class="loc-si">මිහින්තලේ, ශ්‍රී ලංකාව</div>
-      <div class="loc-ta">மிஹிந்தலை, இலங்கை</div>
-      <div class="loc-en">Mihinthale Sri Lanka</div>
     </div>
   </div>
   
-  <hr class="divider-line" />
-  <div class="contact-info">
-    Tel: +94 25 226 5600  |  Fax: +94 25 226 5601  |  Email: registrar@rjt.ac.lk
-  </div>
   <hr class="divider-line" />
   
   <div class="ref-section">
     <div class="ref-left">
-      <div class="ref-row">
-        <span class="ref-label">Your Number:</span>
-        <span class="ref-value">${inputs.yourNumber || '.....................'}</span>
+      <!-- Your No Block -->
+      <div class="ref-lang-row">
+        <div class="ref-lang-labels">
+          <span class="si-label">ඔබේ අංකය</span>
+          <span class="ta-label">உங்கள் எண்</span>
+          <span class="en-label">Your No.</span>
+        </div>
+        <div class="ref-brace">}</div>
+        <div class="ref-val">${inputs.yourNumber || '................................'}</div>
       </div>
-      <div class="ref-row">
-        <span class="ref-label">Our Ref:</span>
-        <span class="ref-value">${inputs.ourRef || '.....................'}</span>
+      <!-- Date Block -->
+      <div class="ref-lang-row" style="margin-top: 5mm;">
+        <div class="ref-lang-labels">
+          <span class="si-label">දිනය</span>
+          <span class="ta-label">திகதி</span>
+          <span class="en-label">Date</span>
+        </div>
+        <div class="ref-brace">}</div>
+        <div class="ref-val">${today}</div>
       </div>
     </div>
-    <div class="ref-right">
-      <div class="ref-row">
-        <span class="ref-label">My Number:</span>
-        <span class="ref-value">${inputs.myNumber || '.....................'}</span>
-      </div>
-      <div class="ref-row">
-        <span class="ref-label">File Number:</span>
-        <span class="ref-value">${inputs.fileNumber || '.....................'}</span>
-      </div>
-      <div class="ref-row">
-        <span class="ref-label">Date:</span>
-        <span class="ref-value">${today}</span>
+    <div class="ref-right" style="display: flex; justify-content: flex-end;">
+      <!-- My No Block -->
+      <div class="ref-lang-row">
+        <div class="ref-lang-labels">
+          <span class="si-label">මගේ අංකය</span>
+          <span class="ta-label">எனது எண்</span>
+          <span class="en-label">My No.</span>
+        </div>
+        <div class="ref-brace">}</div>
+        <div class="ref-val">${inputs.myNumber || '................................'}</div>
       </div>
     </div>
   </div>
@@ -383,9 +436,34 @@ body {
   
   <div class="signature-section">
     <div class="signature-name">${inputs.staffName || '.......................................................'}</div>
-    <div class="signature-title">Deputy Registrar</div>
+    <div class="signature-title">${inputs.staffDesignation || 'Deputy Registrar'}</div>
   </div>
+  
+  <div class="footer-container">
+    <div id="qrcode" class="footer-qr"></div>
+    <div class="footer-text">
+      <div class="footer-line-1">Rajarata University of Sri Lanka, Mihintale – 50300, Sri Lanka</div>
+      <div class="footer-line-2">Web: www.rjt.ac.lk | Email: info@rjt.ac.lk</div>
+      <div class="footer-line-3">+94-252266650</div>
+    </div>
+  </div>
+  <div class="footer-band"></div>
 </div>
+
+<script>
+  // Inline the qrcode.js library
+  ${qrJsContent}
+  
+  // Initialize the QR Code
+  new QRCode(document.getElementById("qrcode"), {
+    text: "https://www.rjt.ac.lk/contacts/",
+    width: 55,
+    height: 55,
+    colorDark : "#000000",
+    colorLight : "#ffffff",
+    correctLevel : QRCode.CorrectLevel.M
+  });
+</script>
 </body>
 </html>
 `;
@@ -397,7 +475,7 @@ body {
     });
 
     const page = await browser.newPage();
-    await page.setContent(htmlContent, { waitUntil: 'networkidle0' as any });
+    await page.setContent(htmlContent, { waitUntil: 'domcontentloaded' as any });
 
     const pdfBuffer = await page.pdf({
       format: 'A4',

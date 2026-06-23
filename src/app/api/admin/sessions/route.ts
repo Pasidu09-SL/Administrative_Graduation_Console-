@@ -318,7 +318,7 @@ export async function POST(req: Request) {
         studentsList.forEach((student: any) => {
           const certNo = `${activeYear}${padSeq(nextSeq)}`;
           const isAttending = student.attending_convocation === true;
-          const sessionVal = sessNum;
+          const sessionVal = isAttending ? sessNum : null;
           const seatVal = isAttending ? nextSeat : null;
 
           valuesArr.push(sessionVal, seatVal, certNo, student.id);

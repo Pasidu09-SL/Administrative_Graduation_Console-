@@ -7,15 +7,22 @@ export async function GET(req: Request) {
   const emailParam = searchParams.get('email');
   const token = searchParams.get('token');
 
+  // 🔥 1. Define baseUrl at the top so ALL redirects use it
+  const baseUrl = process.env.NODE_ENV === 'production' 
+    ? 'https://graduation-portal.duzb.me' 
+    : (req.headers.get('x-forwarded-proto') + '://' + req.headers.get('host') || 'http://localhost:3001');
+
   if (!emailParam || !token) {
-    return NextResponse.redirect(new URL('/?error=Missing%20email%20or%20verification%2520token', req.url));
+    // 💡 Changed req.url to baseUrl
+    return NextResponse.redirect(new URL('/?error=Missing%20email%20or%20verification%2520token', baseUrl));
   }
 
   try {
     // 1. Verify token signature and expiration
     const payload = verifyMagicToken(token);
     if (!payload) {
-      return NextResponse.redirect(new URL('/?error=Invalid%20or%20expired%20magic%20link', req.url));
+      // 💡 Changed req.url to baseUrl
+      return NextResponse.redirect(new URL('/?error=Invalid%20or%20expired%20magic%20link', baseUrl));
     }
 
     // Check registration window status
@@ -35,19 +42,22 @@ export async function GET(req: Request) {
       });
 
       if (!hasBypass) {
-        return NextResponse.redirect(new URL('/?error=Portal%20Closed', req.url));
+        // 💡 Changed req.url to baseUrl
+        return NextResponse.redirect(new URL('/?error=Portal%20Closed', baseUrl));
       }
     }
 
-    // 2. Ensure the email parameter matches the token payload (prevent token reuse for other accounts)
+    // 2. Ensure the email parameter matches the token payload
     if (payload.email.toLowerCase().trim() !== emailParam.toLowerCase().trim()) {
-      return NextResponse.redirect(new URL('/?error=Token%20email%20mismatch', req.url));
+      // 💡 Changed req.url to baseUrl
+      return NextResponse.redirect(new URL('/?error=Token%20email%20mismatch', baseUrl));
     }
 
-    // 3. Redirect to the login screen with email and token prefilled, requiring NIC and Index verification
-    return NextResponse.redirect(new URL(`/?email=${encodeURIComponent(emailParam.toLowerCase().trim())}&token=${encodeURIComponent(token)}`, req.url));
+    // 3. Redirect to the login screen with email and token prefilled
+    return NextResponse.redirect(new URL(`/?email=${encodeURIComponent(emailParam.toLowerCase().trim())}&token=${encodeURIComponent(token)}`, baseUrl));
   } catch (err: any) {
     console.error('Magic login redirect error:', err.message);
-    return NextResponse.redirect(new URL(`/?error=${encodeURIComponent(err.message)}`, req.url));
+    // 💡 Changed req.url to baseUrl
+    return NextResponse.redirect(new URL(`/?error=${encodeURIComponent(err.message)}`, baseUrl));
   }
 }
